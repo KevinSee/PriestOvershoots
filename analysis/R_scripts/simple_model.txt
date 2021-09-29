@@ -1,0 +1,22 @@
+model {
+    # PRIORS
+    for(i in 1:2) {
+    beta[i] ~ dt(0, 0.01, 1)
+    }
+    sigma ~ dt(0, 0.01, 1)T(0,)
+    tau <- pow(sigma, -2)
+    
+    # MODEL
+    for(i in 1:length(tags_est)) {
+    mu[i] <- beta[1] + beta[2] * log(tags_est[i])
+    escp_est_log[i] ~ dnorm(mu[i], tau)
+    }
+    
+    for(i in 1:length(ovrst_tags)) {
+    pred_mu_log[i] <- beta[1] + beta[2] * log(ovrst_tags[i])
+    pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(dwnstrm_escp[i]),)
+    pred_ovrshts[i] <- round(exp(pred_ovrshts_log[i]))
+    
+    phi[i] <- dwnstrm_escp[i] / pred_ovrshts[i]
+    }
+}

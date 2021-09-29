@@ -1,0 +1,635 @@
+---
+title: "Overshoot Bayesian Methods"
+author: "Kevin See"
+output:
+  bookdown::html_document2:
+    fig_height: 6
+    fig_width: 6
+  bookdown::pdf_document2:
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 6
+  bookdown::word_document2:
+    fig_height: 6
+    fig_width: 6
+    always_allow_html: true
+fontsize: 12pt
+mainfont: Times New Roman
+---
+
+```{r setup, echo = F}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  warning = FALSE,
+  echo = FALSE,
+  message = FALSE,
+  comment = "#>"
+)
+```
+
+```{r load-packages}
+# setwd('analysis')
+# load needed libraries
+library(tidyverse)
+library(readxl)
+library(magrittr)
+library(msm)
+library(ggrepel)
+library(ggpubr)
+
+library(knitr)
+library(kableExtra)
+
+# theme_set(theme_bw())
+theme_set(theme_pubr())
+
+# default options for tables
+options(knitr.kable.NA = '-')
+
+# when knitting to Word, use this
+# what kind of document is being created?
+doc.type <- knitr::opts_knit$get('rmarkdown.pandoc.to')
+
+if(doc.type == 'docx') {
+  options(knitr.table.format = "pandoc")
+}
+
+```
+
+```{r read-data}
+# read in data
+obs_ovrsht_org = read_excel('../data/overshoot estimates.xlsx',
+                            range = 'A3:C10',
+                            col_names = c('Year',
+                                          'juv_tags',
+                                          'pom_overshoots')) %>%
+  mutate(origin = 'Wild',
+         location = 'downstream_PRA') %>%
+  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+                       range = 'A19:B26',
+                       col_names = c('Year',
+                                     'juv_tags')) %>%
+              mutate(origin = 'Wild',
+                     location = 'at_PRA')) %>%
+  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+                       range = 'A31:C38',
+                       col_names = c('Year',
+                                     'juv_tags',
+                                     'pom_overshoots')) %>%
+              mutate(origin = 'Hatchery',
+                     location = 'downstream_PRA')) %>%
+  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+                       range = 'A47:B54',
+                       col_names = c('Year',
+                                     'juv_tags')) %>%
+              mutate(origin = 'Hatchery',
+                     location = 'at_PRA')) %>%
+  select(Year,
+         Origin = origin,
+         location,
+         everything()) %>%
+  arrange(location, Origin, Year)
+
+# data on individual overshoots
+obs_ovrsht = read_excel("../data/known overshoot fallback locations.xlsx") %>%
+  janitor::clean_names() %>%
+  rename(notes = x5,
+         site = downstream_obs_site) %>%
+  tidyr::fill(total) %>%
+  mutate(year = year + 1)
+
+# estimated overshoots
+est_ovrsht = obs_ovrsht %>%
+  group_by(Year = year, site) %>%
+  summarise(obs_ovrst_tags = n_distinct(pit_tag)) %>%
+  ungroup() %>%
+  # get estimates of downstream detection prob
+  left_join(as.list(2011:2018) %>%
+              rlang::set_names() %>%
+              map_df(.id = 'Year',
+                     .f = function(x) {
+                       read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                                  "Detection") %>%
+                         janitor::clean_names()
+                     }) %>%
+              mutate_at(vars(Year),
+                        list(as.numeric)) %>%
+              filter(!grepl("A0$", node)) %>%
+              mutate(site = str_remove(node, "B0$")) %>%
+              select(Year, site, 
+                     det_est = estimate, 
+                     det_se = se)) %>%
+  # drop sites with no detection probability: they are all not the head of branches
+  filter(!is.na(det_est)) %>%
+  mutate(beta_alpha = ((1 - det_est) / det_se^2 - 1 / det_est) * det_est^2,
+         beta_alpha = if_else(beta_alpha < 0, 0.01, beta_alpha),
+         beta_beta = beta_alpha * (1 / det_est - 1)) %>%
+  mutate(beta_alpha = if_else(det_est == 1, 1, beta_alpha),
+         beta_beta = if_else(det_est == 1, 0, beta_beta)) %>%
+  mutate(est_ovrst_tags = obs_ovrst_tags / det_est,
+         # est_ovrst_tags = floor(est_ovrst_tags),
+         est_ovrst_tags = round(est_ovrst_tags),
+         rho = 1 / (beta_alpha + beta_beta + 1),
+         var_ovrst_tags = est_ovrst_tags * det_est * (1 - det_est) * (1 + (est_ovrst_tags - 1)*rho),
+         se_ovrst_tags = sqrt(var_ovrst_tags)) %>%
+  mutate(Origin = 'Wild') %>%
+  select(Year, Origin, everything())
+
+# get estimates of downstream escapement
+dwnstrm_est = as.list(2011:2018) %>%
+  rlang::set_names() %>%
+  map_df(.id = 'Year',
+         .f = function(x) {
+           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                      1) %>%
+             filter(Population == 'BelowPriest')
+         }) %>%
+  mutate_at(vars(Year),
+            list(as.numeric)) %>%
+  mutate(Origin = recode(Origin,
+                         'Natural' = 'Wild'))
+
+# join escapement estimates and estimated overshoot tags, using all branches and all overshoot tags
+# Andrew's preferred method
+mod_data = est_ovrsht %>%
+  group_by(Year, Origin) %>%
+  summarise(tags_obs = sum(obs_ovrst_tags),
+            det_prob = mean(det_est),
+            det_prob_wgt = weighted.mean(det_est, w = est_ovrst_tags),
+            tags_est = sum(est_ovrst_tags),
+            tags_se = sqrt(sum(se_ovrst_tags^2))) %>%
+  ungroup() %>%
+  full_join(dwnstrm_est %>%
+              filter(Origin == "Wild") %>%
+              select(-Population) %>%
+              rename(escp_est = Estimate,
+                     escp_se = SE,
+                     escp_lwr = lowerCI,
+                     escp_upr = upperCI))
+
+#-------------------------------------------------
+# turn it into data for JAGS
+jags_data = mod_data %>%
+  select(Year, Origin, tags_est:escp_se) %>%
+  mutate(tags_prec = 1 / tags_se^2,
+         escp_prec = 1 / escp_se^2,
+         escp_est_log = log(escp_est)) %>%
+  select(-ends_with("se"),
+         -Origin) %>%
+  select(-escp_est,
+         -escp_prec,
+         -Year) %>%
+  as.list()
+
+# add data for predictions
+# known overshoot tags observed at PRA, their origin, and POM estimates of downstream escapement
+jags_data = c(jags_data,
+              obs_ovrsht_org %>%
+                filter(location == "at_PRA") %>%
+                select(Year, Origin, ovrst_tags = juv_tags) %>%
+                left_join(dwnstrm_est %>%
+                            select(Year, Origin, dwnstrm_escp = Estimate, dwnstrm_se = SE)) %>%
+                # filter(Origin == 'Wild') %>%
+                # mutate(ovrst_org = as.numeric(as.factor(Origin))) %>%
+                select(-Year,
+                       -Origin) %>%
+                as.list())
+
+
+```
+
+```{r avg-detection, eval = T}
+# average detection at sites
+avg_det = as.list(2011:2018) %>%
+  rlang::set_names() %>%
+  map_df(.id = 'Year',
+         .f = function(x) {
+           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                      "Detection") %>%
+             janitor::clean_names()
+         }) %>%
+  mutate_at(vars(Year),
+            list(as.numeric)) %>%
+  filter(grepl('PRO', node) |
+           grepl('ICH', node) |
+           grepl('PRV', node) |
+           grepl('TMF', node) |
+           grepl('^JD1', node)) %>%
+  filter(!grepl('A0$', node)) %>%
+  mutate(node = str_remove(node, "B0$")) %>%
+  mutate(cv = se / estimate) %>%
+  group_by(node) %>%
+  summarise(mean_tags = mean(n_tags),
+            mean = mean(estimate),
+            sd_est = sd(estimate),
+            mean_se = mean(se),
+            mean_cv = mean(cv, na.rm = T))
+
+```
+
+```{r dwnstrm_abund}
+# get branch specific estimates of downstream escapement
+dwnstrm_loc_est = as.list(2011:2018) %>%
+  rlang::set_names() %>%
+  map_df(.id = 'Year',
+         .f = function(x) {
+           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                      2) %>%
+             filter(param %in% c("BelowJD1",
+                                 'past_RSH',
+                                 'past_PRH',
+                                 'past_JD1',
+                                 'past_TMF',
+                                 'past_ICH',
+                                 'past_PRO',
+                                 'past_PRV')) %>%
+             rename(site = param) %>%
+             mutate(site = str_remove(site, "^past_"))
+         }) %>%
+  mutate_at(vars(Year),
+            list(as.numeric)) %>%
+  mutate(Origin = recode(Origin,
+                         'Natural' = 'Wild')) %>%
+  rename(pom_est = Estimate,
+         pom_se = SE,
+         pom_ci_low = lowerCI,
+         pom_ci_high = upperCI)
+
+# re-shape data
+flbk_abund = dwnstrm_loc_est %>%
+  select(Year:pom_est) %>%
+  mutate(Origin = recode(Origin,
+                         "Hatchery" = 'H', 
+                         "Wild" = "W")) %>%
+  pivot_wider(names_from = c("site", "Origin"),
+              values_from = "pom_est") %>%
+  select(Year,
+         ends_with("W"),
+         ends_with("H")) %>%
+  select(Year, 
+         starts_with('PRO'),
+         starts_with('ICH'),
+         starts_with('PRV'),
+         starts_with('TMF'),
+         starts_with('JD1'))
+
+```
+
+
+# Goal
+
+Estimate the number of overshoots that reach Priest. If PIT tag rates for wild steelhead were known, we could expand detection (assuming 100%) at PRD of known overshoots (juveniles PIT tagged from MCR and SR DPS and detected at PRD) to estimate overshoot abundance at PRD. Since population specific PIT tag rates are unknown we need another method to estimate overshoot abundance.
+
+# Available Data
+
+* Number of fish tagged as juveniles from downstream areas that are detected at Priest in year $i$ ($T_i$).
+* Number of fish tagged as juveniles from downstream areas that are detected at Priest and detected succesfully falling back and entering downstream area $j$ which is part of the patch-occupancy model in year $i$ ($s_{i,j}$).
+* Estimates, from patch-occupancy model, of total fallbacks (fish that crossed Priest, then fell back and entered a downstream tributary) in year $i$ ($F_i$). These are based on a different set of tags from adults tagged at Priest, who are detected downstream. It accounts for imperfect detection at the downstream arrays.
+* Estimates, from patch-occupancy model, of detection probability of all downstream sites.
+
+The detection probability estimates are shown in Table \@ref(tab:det-prob-tab). Estimates of fallback abundance from the POM are shown in Table \@ref(tab:flbk-est).
+
+```{r det-prob-tab}
+avg_det %>%
+  arrange(desc(mean_tags)) %>%
+  select(Site = node,
+         `Avg Tags` = mean_tags,
+         Mean = mean,
+         `SD of Mean` = sd_est,
+         `Avg SE` = mean_se,
+         `Avg CV` = mean_cv) %>%
+  kable(booktabs = T,
+        linesep = "",
+        digits = c(0, 0, rep(3, 4)),
+        caption = "Summaries of detection probabilities of sites downstream of PRD.") %>%
+  kable_styling()
+```
+
+```{r flbk-est}
+flbk_abund %>%
+  mutate_at(vars(Year),
+            list(as.character)) %>%
+  bind_rows(flbk_abund %>%
+              summarise_at(vars(-Year),
+                           list(mean)) %>%
+              mutate(Year = "Mean")) %>%
+  kable(digits = 0,
+        booktabs = T,
+        linesep = "",
+        caption = "Estimates by subbasin and PTAGIS code of overshoot fallback steelhead downstream of Priest Rapids Dam. (PRO = Prosser Dam; ICH = Ice Harbor Dam; PRV = Pierce RV Park instream array; TMF = Three Mile Falls Dam; JD1 = Lower John Day at McDonald Ferry).") %>%
+  kable_styling(latex_options = c("scale_down"))
+```
+
+```{r flbk-est-save, eval = F}
+# save as csv
+flbk_abund %>%
+  mutate_at(vars(Year),
+            list(as.character)) %>%
+  bind_rows(flbk_abund %>%
+              summarise_at(vars(-Year),
+                           list(mean)) %>%
+              mutate(Year = "Mean")) %>%
+  write_csv('../outgoing/Table2.csv')
+```
+
+
+# Methods
+
+First, we need to account for imperfect detection at the downstream sites so we can expand the number of known overshoot tags detected there. We do that by using the estimates of detection probablity from the patch-occupancy model for year $i$ at each site $j$, and then summing up the estimated tags at each detection site to get an estimate of total overshoot return tags, $\hat{t_i}$. 
+
+$$
+t_i = \sum_j^J \frac{s_{i,j}}{\hat{p_{i,j}}}
+$$
+
+Next, we develop a relationship between the number of overshoot return tags, $t_i$ and the total overshoot return abundance, $F_i$. We assumed a log-log relationship (see Figure @\ref(fig:tag_escp_fig)).
+
+$$
+F_i \sim e^{\beta_0} * t_i^{\beta_1}\\
+\log(F_i) \sim \beta_0 + \beta_1 * \log(t_i)
+$$
+
+```{r tag_escp_fig, fig.caption = "Plot of previously tagged fish detected at Priest Rapids and then subsequently detected downstream (adjusted for downstream detection probability) vs estimates of downstream overshoot abundance from the patch-occupancy model."}
+mod_data %>%
+  ggplot(aes(x = tags_est,
+             y = escp_est)) +
+  geom_errorbar(aes(ymin = escp_lwr,
+                    ymax = escp_upr),
+                width = 0) +
+  geom_errorbarh(aes(xmin = tags_est + tags_se * qnorm(0.025),
+                     xmax = tags_est + tags_se * qnorm(0.975)),
+                 height = 0) +
+  geom_point() +
+  geom_smooth(method = glm,
+              formula = y ~ log(x),
+              method.args = list(family = gaussian(link = 'log')),
+              se = F,
+              fullrange = T) +
+  labs(x = 'Wild Adults Tagged as Juveniles\nthat Returned Downstream',
+       y = 'Total Successful Overshoots (from POM)')
+
+ggsave('../figures/log_log_regression.pdf',
+       width = 6,
+       height = 6)
+
+```
+
+We then use that relationship, ($\hat{\beta}$), and the total number of known overshoot tags observed at Priest, $T_i$, to predict the total overshoot abundance at Priest, $O_i$. The overshoot return survival, $\phi_i$, is the calculated from that and the estimate of total downstream abundance.
+
+$$
+\phi_i = \frac{N_i}{O_i}
+$$
+
+Written out mathematically, the whole things looks like this:
+
+
+$$
+\begin{aligned}
+  \mu_i &= \sum_j^J \frac{s_{i,j}}{\hat{p_{i,j}}} \\
+  t_i &\sim N(\mu_i, \sigma^2_i) \\
+  \\
+  F_i &\sim e^{\beta_0} * t_i^{\beta_1} \\
+  \log(F_i) &= \beta_0 + \beta_1 * \log(t_i) + e_i\\
+  e_i &\sim N(0, \tau^2) \\
+  \\
+  \log(\omega_i) &= \beta_0 + \beta_1 * \log(T_i) \\
+  O_i &\sim N(\omega_i, \tau^2) \\
+  \\
+  N_i &\sim N(F_i, \gamma^2) \\
+  \\
+  \phi_i &= \frac{N_i}{O_i} \approx \left( \frac{t_i}{T_i} \right)^{\beta_1} \\
+\end{aligned}
+$$
+
+We fit this entire model in a Bayesian framework, using JAGS software. The JAGS model looks like this:
+
+```{r jags_model, echo = T}
+jags_model = function() {
+  "  # PRIORS
+  for(i in 1:2) {
+    beta[i] ~ dt(0, 0.01, 1)
+  }
+  sigma ~ dt(0, 0.01, 1)T(0,)
+  tau <- pow(sigma, -2)
+  
+  # MODEL
+  for(i in 1:length(tags_est)) {
+    n_tags_org[i] ~ dnorm(tags_est[i], tags_prec[i])
+    n_tags[i] <- round(n_tags_org[i])
+    
+    # couldn't figure out how to incorporate this uncertainty, 
+    # because n_escp_log would end up on the left side twice
+    # n_escp_log[i] ~ dlnorm(escp_est[i], escp_prec[i])
+    
+    mu[i] <- beta[1] + beta[2] * log(n_tags[i])
+    
+    # assuming downstream escapement estimates are known
+    escp_est_log[i] ~ dnorm(mu[i], tau)
+  }
+  
+  for(i in 1:length(ovrst_tags)) {
+    # deal with uncertainty in downstream escapement estimates
+    est_dwnstrm_org[i] ~ dnorm(dwnstrm_escp[i], 1 / (dwnstrm_se[i]^2))
+    est_dwnstrm[i] <- round(est_dwnstrm_org[i])
+    
+    # predict the number of overshoot fish at Priest
+    pred_mu_log[i] <- beta[1] + beta[2] * log(ovrst_tags[i])
+    pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(est_dwnstrm[i]),log(1e4))
+    pred_ovrshts[i] <- round(exp(pred_ovrshts_log[i]))
+
+    # estimate survival of overshoots
+    phi[i] <- est_dwnstrm[i] / pred_ovrshts[i]
+  }"
+}
+```
+
+```{r run-model, eval = F}
+library(postpack)
+library(rjags)
+
+# write model to a text file
+jags_file = "model.txt"
+write_model(jags_model, jags_file)
+
+# which paramters to track?
+jags_params = c("beta",
+                "sigma",
+                "mu",
+                "n_tags",
+                "phi",
+                "est_dwnstrm",
+                "pred_ovrshts")
+
+# using rjags package
+set.seed(3)
+jags = jags.model(jags_file,
+                  data = jags_data,
+                  inits = list(pred_ovrshts_log = log(jags_data$dwnstrm_escp + 10)),
+                  n.chains = 4,
+                  n.adapt = 1000)
+
+# burnin
+update(jags, n.iter = 50000)
+# posterior sampling
+post = coda.samples(jags,
+                    jags_params,
+                    n.iter = 50000,
+                    thin = 50)
+
+# convert posteriors into long tibble
+post_df = as.matrix(post,
+                    chains = T,
+                    iters = T) %>%
+  as_tibble() %>%
+  pivot_longer(cols = c(-CHAIN, -ITER),
+               names_to = 'param',
+               values_to = 'value') %>%
+  mutate(param_fam = str_split(param, "\\[", simplify = T)[,1],
+         param_num = str_extract(param, "[:digit:]+"),
+         param_num = as.numeric(param_num))
+
+param_summ = post_summ(post,
+                       jags_params,
+                       Rhat = T,
+                       ess = T) %>%
+  t() %>%
+  as_tibble(rownames = "param") %>%
+  mutate(cv = sd / mean)
+
+save(mod_data, jags_data, post, param_summ, post_df,
+     file = "../data/mcmc_output.rda")
+```
+
+# Results
+
+```{r load-model}
+load("../data/mcmc_output.rda")
+```
+
+```{r comp-fig, fig.cap = "Comparison of total adusted counts at Priest and the sum of predicted overshoots and escapement to four upper Columbia steelhead populations."}
+#--------------------------------------------------
+# compare counts at Priest and estimates across UC pops
+#--------------------------------------------------
+uc_pops = as.list(2011:2018) %>%
+  rlang::set_names() %>%
+  map_df(.id = 'Year',
+         .f = function(x) {
+           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                      "Population Escapement") %>%
+             janitor::clean_names()
+         }) %>%
+  filter(population %in% c("Wenatchee",
+                           "Entiat",
+                           "Methow",
+                           "Okanogan")) %>%
+  group_by(Year, Origin = origin) %>%
+  summarise_at(vars(uc_pops = estimate),
+               list(sum)) %>%
+  ungroup()
+
+
+pra_total = as.list(2011:2018) %>%
+  rlang::set_names() %>%
+  map_df(.id = 'Year',
+         .f = function(x) {
+           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                      "All Escapement") %>%
+             janitor::clean_names()
+         }) %>%
+  filter(param %in% c("past_RIA",
+                      'dwnStrm',
+                      "PRA_bb")) %>%
+  group_by(Year, Origin = origin) %>%
+  summarise_at(vars(PRA = estimate),
+               list(sum)) %>%
+  ungroup()
+
+comp_df = pra_total %>%
+  full_join(uc_pops) %>%
+  mutate_at(vars(Year),
+            list(as.numeric)) %>%
+  mutate(Origin = recode(Origin,
+                         "Natural" = "Wild")) %>%
+  full_join(param_summ %>%
+              filter(grepl('pred_ovrshts', param)) %>%
+              bind_cols(obs_ovrsht_org %>%
+                          filter(location == "at_PRA") %>%
+                          select(Year, Origin)) %>%
+              select(Year, Origin,
+                     pred_ovrst = mean)) %>%
+  mutate(uc_plus_ovrst = uc_pops + pred_ovrst,
+         leftover = PRA - uc_plus_ovrst,
+         abs_diff = abs(leftover),
+         rel_diff = leftover / PRA,
+         rel_abs_diff = abs(rel_diff)) %>%
+  arrange(Origin, Year)
+  
+
+# comp_df %>%
+#   group_by(Origin) %>%
+#   summarise_at(vars(PRA, leftover, abs_diff, rel_diff, rel_abs_diff),
+#                list(mean)) %>%
+#   mutate(abs_rel_diff = abs_diff / PRA)
+# 
+# comp_df %>%
+#   group_by(Origin) %>%
+#   summarise(PRA_mean = mean(PRA),
+#             RMSE = sqrt(mean(leftover^2)),
+#             rel_RMSE = RMSE / PRA_mean)
+# 
+# comp_df %>%
+#   select(uc_plus_ovrst, PRA) %>%
+#   corrr::correlate()
+  
+
+
+comp_df %>%
+  filter(Origin == "Wild") %>%
+  ggplot(aes(x = Year)) +
+  geom_line(aes(y = PRA,
+                color = "At Priest")) +
+  geom_point(aes(y = PRA,
+                 color = "At Priest")) +
+  geom_line(aes(y = uc_plus_ovrst,
+                color = "UC Pops plus Est. Overshoots")) +
+  geom_point(aes(y = uc_plus_ovrst,
+                 color = "UC Pops plus Est. Overshoots")) +
+  scale_color_brewer(palette = "Set1",
+                     name = "Source") +
+  theme(legend.position = "bottom") +
+  facet_wrap(~ Origin,
+             scales = 'fixed') +
+  labs(y = "Total Steelhead")
+```
+
+Recreate Table 3 of manuscript:
+```{r tab3}
+tab3 = obs_ovrsht_org %>%
+                filter(location == "at_PRA") %>%
+                select(Year, Origin, ovrst_tags = juv_tags) %>%
+  filter(Origin == "Wild") %>%
+  bind_cols(param_summ %>%
+              filter(grepl("pred_ovrshts", param)) %>%
+              slice(9:16) %>%
+              select(ovrst_PRD = mean,
+                     prd_ci_low = `2.5%`,
+                     prd_ci_upp = `97.5%`)) %>%
+  bind_cols(param_summ %>%
+              filter(grepl("phi", param)) %>%
+              slice(9:16) %>%
+              select(phi = mean,
+                     phi_ci_low = `2.5%`,
+                     phi_ci_upp = `97.5%`))
+
+tab3 %>%
+  select(-Origin) %>%
+  mutate(Year = Year - 1) %>%
+  mutate_at(vars(Year),
+            list(as.character)) %>%
+  kable(booktabs = T,
+        digits = c(rep(0, 5), rep(3, 3)),
+        format.args = list(big.mark = ','),
+        linesep = "",
+        caption = "Estimated abundance of overshoot steelhead at Priest Rapids Dam and the overshoot return rate or proportion of fish observed downstream of Priest Rapids Dam prior to spawning.") %>%
+  kable_styling(latex_options = c("scale_down"))
+```
+

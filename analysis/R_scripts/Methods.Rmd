@@ -1,0 +1,171 @@
+---
+title: "Overshoot Methods"
+author: Kevin See
+output: 
+  html_document:
+    fig_height: 6
+    fig_width: 6
+---
+
+```{r setup, echo = F}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  warning = FALSE,
+  echo = FALSE,
+  message = FALSE,
+  comment = "#>"
+)
+```
+
+```{r load-packages}
+# setwd('analysis')
+# load needed libraries
+library(tidyverse)
+library(readxl)
+library(magrittr)
+library(msm)
+library(ggrepel)
+
+theme_set(theme_bw())
+
+```
+
+```{r read-data}
+# read in data
+data = read_excel('../data/overshoot estimates.xlsx',
+                  range = 'A3:C10',
+                  col_names = c('Year',
+                                'juv_tags',
+                                'pom_overshoots')) %>%
+  mutate(origin = 'Wild',
+         location = 'downstream_PRA') %>%
+  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+                       range = 'A19:B26',
+                       col_names = c('Year',
+                                     'juv_tags')) %>%
+              mutate(origin = 'Wild',
+                     location = 'at_PRA')) %>%
+  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+                       range = 'A31:C38',
+                       col_names = c('Year',
+                                     'juv_tags',
+                                     'pom_overshoots')) %>%
+              mutate(origin = 'Hatchery',
+                     location = 'downstream_PRA')) %>%
+  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+                       range = 'A47:B54',
+                       col_names = c('Year',
+                                     'juv_tags')) %>%
+              mutate(origin = 'Hatchery',
+                     location = 'at_PRA'))
+
+# get estimates of downstream escapement
+dwnstrm_est = as.list(2011:2018) %>%
+  rlang::set_names() %>%
+  map_df(.id = 'Year',
+         .f = function(x) {
+           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                      1) %>%
+             filter(Population == 'BelowPriest')
+         }) %>%
+  mutate_at(vars(Year),
+            list(as.numeric))
+
+data %<>%
+  select(-pom_overshoots) %>%
+  left_join(dwnstrm_est %>%
+              mutate(origin = recode(Origin,
+                                     'Natural' = 'Wild')) %>%
+              select(-Population, -Origin, -SE) %>%
+              rename(pom_overshoots = Estimate,
+                     lwr95 = lowerCI,
+                     upr95 = upperCI) %>%
+              mutate(location = 'downstream_PRA')) %>%
+  select(origin, location, Year, juv_tags, pom_overshoots, lwr95, upr95)
+
+```
+
+# Goal
+
+Estimate the number of overshoots that reach Priest. If PIT tag rates for wild steelhead were known, we could expand detection (assuming 100%) at PRD of known overshoots (juveniles PIT tagged from MCR and SR DPS and detected at PRD) to estimate overshoot abundance at PRD. Since population specific PIT tag rates are unknown we need another method to estimate overshoot abundance.
+
+# Available Data
+
+* Number of fish tagged as juveniles from downstream areas that are detected at Priest in year $i$ ($t_{i, tot}$).
+* Number of fish tagged as juveniles from downstream areas that are detected at Priest and detected succesfully falling back and entering downstream area in year $i$ ($t_{i, suc}$). $t_{i, suc}$ is a subset of $t_{i, tot}$.
+* Estimates, from patch-occupancy model, of total successful overshoots in year $i$ ($N_i$). These are based on a different set of tags from adults tagged at Priest, who are detected downstream. It accounts for imperfect detection at the downstream arrays.
+* Estimates, from patch-occupancy model, of detection probability of all downstream sites.
+
+# Methods
+
+First, a relationship between $t_{i, suc}$ and $N_i$ is developed. We assumed a linear relationship, with a fixed intercept of 0. The slope of this relationship, $\beta_1$ is the inverse of the average expansion factor for wild fish tagged as juveniles who successfully overshoot, fallback and enter their downstream tributaries. 
+
+$$
+N_i \sim \beta_1 * t_{i, suc}
+$$
+
+$$
+\beta_1 \sim \frac{N_i}{t_{i, suc}}
+$$
+
+```{r}
+data %>%
+  filter(origin == 'Wild',
+         location == 'downstream_PRA') %>%
+  ggplot(aes(x = juv_tags,
+             y = pom_overshoots)) +
+  geom_point() +
+  geom_smooth(method = lm,
+              formula = y ~ x - 1,
+              se = T,
+              fullrange = T) +
+  geom_text_repel(aes(label = Year)) +
+  # geom_text(x = 5,
+  #           y = 1700,
+  #           vjust = 0, 
+  #           hjust = 0,
+  #           parse = T,
+  #           label = paste("r^2 ==", round(mod_df$R2, 3))) +
+  labs(x = 'Successful Overshoot Adults Tagged as Juveniles\nDetected at Priest Rapids Dam',
+       y = 'Total Successful Overshoots (from POM)')
+```
+
+```{r fit-model, echo = F}
+mod_df = data %>%
+  filter(origin == 'Wild',
+         location == 'downstream_PRA') %>%
+  group_by(origin) %>%
+  nest() %>%
+  mutate(lin_mod = map(.x = data,
+                       .f = function(x) {
+                         lm(pom_overshoots ~ -1 + juv_tags,
+                         data = x)
+                         # lm(pom_overshoots ~ juv_tags,
+                         #    data = x)
+                       }),
+         summ = map(.x = lin_mod,
+                    .f = summary)) %>%
+  mutate(intercept = map_dbl(.x = lin_mod,
+                             .f = function(x) coef(x)[match('(Intercept)', names(coef(x)))]),
+         slope = map_dbl(.x = lin_mod,
+                         .f = function(x) coef(x)[match('juv_tags', names(coef(x)))]),
+         slope_se = map_dbl(.x = summ,
+                            .f = function(x) coefficients(x)[1,2]),
+         R2 = map_dbl(.x = summ,
+                      .f = 'r.squared'),
+         adj_R2 = map_dbl(.x = summ,
+                          .f = 'adj.r.squared'))
+```
+
+With our data, this works out to an average downstream tag rate of `r round(1/mod_df$slope, 3) * 100`%. We then assume that all the fish that overshoot to Priest Rapids, whether they survive to fallback to their natal stream or not, were tagged at that same tag rate. We can then expand the number of known overshoot tags, $t_{i, tot}$, by $\hat{\beta_1}$ to get an estimate of all overshoot fish, $O_i$.
+
+$$
+\hat{O_i} = \hat{\beta_1} * t_{i, tot}
+$$
+
+The conversion or survival rate of overshoot fish for year $i$ is defined as:
+
+$$
+s_i = \frac{\hat{N_i}}{\hat{O_i}} = \frac{\hat{N_i}}{\hat{\beta_1} * t_{i,tot}} \sim \frac{\hat{N_i}}{\frac{N_i}{t_{i, suc}} * t_{i,tot}} = \frac{t_{i, suc}}{t_{i, tot}}
+$$
+where $\hat{N_i}$ comes from the patch occupancy model. 
