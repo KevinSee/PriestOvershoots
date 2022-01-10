@@ -2,7 +2,7 @@
 # Purpose: Calculate adult overshoots at Priest Rapids dam
 # Created: 9/1/20
 # Last Modified: 9/8/20
-# Notes: 
+# Notes:
 
 #-----------------------------------------------------------------
 # load needed libraries
@@ -18,27 +18,27 @@ theme_set(theme_bw())
 # read in data
 #-----------------------------------------------------------------
 # original data of known overshoots
-obs_ovrsht_org = read_excel('data/overshoot estimates.xlsx',
+obs_ovrsht_org = read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A3:C10',
                        col_names = c('Year',
                                      'juv_tags',
                                      'pom_overshoots')) %>%
   mutate(origin = 'Wild',
          location = 'downstream_PRA') %>%
-  bind_rows(read_excel('data/overshoot estimates.xlsx',
+  bind_rows(read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A19:B26',
                        col_names = c('Year',
                                      'juv_tags')) %>%
               mutate(origin = 'Wild',
                      location = 'at_PRA')) %>%
-  bind_rows(read_excel('data/overshoot estimates.xlsx',
+  bind_rows(read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A31:C38',
                        col_names = c('Year',
                                      'juv_tags',
                                      'pom_overshoots')) %>%
               mutate(origin = 'Hatchery',
                      location = 'downstream_PRA')) %>%
-  bind_rows(read_excel('data/overshoot estimates.xlsx',
+  bind_rows(read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A47:B54',
                        col_names = c('Year',
                                      'juv_tags')) %>%
@@ -50,7 +50,7 @@ obs_ovrsht_org = read_excel('data/overshoot estimates.xlsx',
          everything())
 
 # data on individual overshoots
-obs_ovrsht = read_excel("data/known overshoot fallback locations.xlsx") %>%
+obs_ovrsht = read_excel("analysis/data/raw_data/known overshoot fallback locations.xlsx") %>%
   janitor::clean_names() %>%
   rename(notes = x5,
          site = downstream_obs_site) %>%
@@ -67,7 +67,7 @@ est_ovrsht = obs_ovrsht %>%
               rlang::set_names() %>%
               map_df(.id = 'Year',
                      .f = function(x) {
-                       read_excel(paste0('data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                       read_excel(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
                                   "Detection") %>%
                          janitor::clean_names()
                      }) %>%
@@ -75,8 +75,8 @@ est_ovrsht = obs_ovrsht %>%
                         list(as.numeric)) %>%
               filter(!grepl("A0$", node)) %>%
               mutate(site = str_remove(node, "B0$")) %>%
-              select(Year, site, 
-                     det_est = estimate, 
+              select(Year, site,
+                     det_est = estimate,
                      det_se = se)) %>%
   # drop sites with no detection probability: they are all not the head of branches
   filter(!is.na(det_est)) %>%
@@ -99,7 +99,7 @@ dwnstrm_est = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(paste0('analysis/data/derived_data//DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
                       1) %>%
              filter(Population == 'BelowPriest')
          }) %>%
@@ -136,7 +136,7 @@ dwnstrm_est = as.list(2011:2018) %>%
 #          pom_ci_high = upperCI)
 
 
-# # 
+# #
 # est_ovrsht %>%
 #   full_join(dwnstrm_loc_est %>%
 #               filter(Origin == 'Wild')) %>%
@@ -164,7 +164,7 @@ est_ovrsht %>%
 
 # look at which fish ended up being dropped, because of their downstream detection location
 # these match up with the "n_miss_tags" in the data.frame above
-read_excel("data/known overshoot fallback locations.xlsx") %>%
+read_excel("analysis/data/raw_data/known overshoot fallback locations.xlsx") %>%
   janitor::clean_names() %>%
   rename(notes = x5,
          site = downstream_obs_site) %>%
@@ -212,7 +212,7 @@ mod_data = est_ovrsht %>%
   #              group_by(Year, Origin) %>%
   #              summarise(escp_est = sum(pom_est),
   #                        escp_se = sqrt(sum(pom_se^2))))
-  
+
 
 
 
@@ -301,40 +301,40 @@ p2
 #                       .f = 'r.squared'),
 #          adj_R2 = map_dbl(.x = summ,
 #                           .f = 'adj.r.squared'))
-# 
-# 
-# mod_log_df = mod_data %>%
-#   mutate(escp_est_log = log(escp_est),
-#          tags_est_log = log(tags_est)) %>%
-#   group_by(Origin) %>%
-#   nest() %>%
-#   mutate(lin_mod = map(.x = data,
-#                        .f = function(x) {
-#                          lm(escp_est_log ~ tags_est_log,
-#                             data = x)
-#                        }),
-#          glm_mod = map(.x = data,
-#                        .f = function(x) {
-#                          glm(escp_est ~ log(tags_est),
-#                              data = x,
-#                              family = gaussian(link = "log"))
-#                        }),
-#          lin_summ = map(.x = lin_mod,
-#                         .f = summary),
-#          glm_summ = map(.x = glm_mod,
-#                         .f = summary)) %>%
-#   mutate(coefs = map(.x = lin_mod,
-#                      .f = coefficients),
-#          int = map_dbl(coefs,
-#                        .f = function(x) x[1]),
-#          slope = map_dbl(coefs,
-#                          .f = function(x) x[2]),
-#          slope_se = map_dbl(.x = lin_summ,
-#                             .f = function(x) coefficients(x)[1,2]),
-#          R2 = map_dbl(.x = lin_summ,
-#                       .f = 'r.squared'),
-#          adj_R2 = map_dbl(.x = lin_summ,
-#                           .f = 'adj.r.squared'))
+#
+#
+mod_log_df = mod_data %>%
+  mutate(escp_est_log = log(escp_est),
+         tags_est_log = log(tags_est)) %>%
+  group_by(Origin) %>%
+  nest() %>%
+  mutate(lin_mod = map(.x = data,
+                       .f = function(x) {
+                         lm(escp_est_log ~ tags_est_log,
+                            data = x)
+                       }),
+         glm_mod = map(.x = data,
+                       .f = function(x) {
+                         glm(escp_est ~ log(tags_est),
+                             data = x,
+                             family = gaussian(link = "log"))
+                       }),
+         lin_summ = map(.x = lin_mod,
+                        .f = summary),
+         glm_summ = map(.x = glm_mod,
+                        .f = summary)) %>%
+  mutate(coefs = map(.x = lin_mod,
+                     .f = coefficients),
+         int = map_dbl(coefs,
+                       .f = function(x) x[1]),
+         slope = map_dbl(coefs,
+                         .f = function(x) x[2]),
+         slope_se = map_dbl(.x = lin_summ,
+                            .f = function(x) coefficients(x)[1,2]),
+         R2 = map_dbl(.x = lin_summ,
+                      .f = 'r.squared'),
+         adj_R2 = map_dbl(.x = lin_summ,
+                          .f = 'adj.r.squared'))
 
 
 mod_df = mod_data %>%
@@ -414,7 +414,7 @@ mod_df %>%
   geom_point() +
   geom_smooth(se = F) +
   facet_wrap(~ Origin)
-  
+
 mod_df %>%
   select(type, pred_data, preds) %>%
   unnest(cols = c(pred_data, preds)) %>%
@@ -427,7 +427,7 @@ mod_df %>%
   mutate(lin_surv = dwnstrm_escp / lin_mod,
          log_surv = dwnstrm_escp / log_mod,
          glm_surv = dwnstrm_escp / glm_mod)
-  
+
 
 library(ggfortify)
 autoplot(mod_df$model[[1]], which = 1:6)
@@ -442,11 +442,11 @@ exp(mod_df$coefs[[1]][1])
 
 # curve(2*x^4.55, xlim = c(0, 35))
 
-curve(exp(mod_df$coefs[[2]][1])*x^mod_df$coefs[[2]][2], 
+curve(exp(mod_df$coefs[[2]][1])*x^mod_df$coefs[[2]][2],
       xlim = c(0, 35),
       col = "blue")
 
-curve(exp(mod_df$coefs[[3]][1])*x^mod_df$coefs[[3]][2], 
+curve(exp(mod_df$coefs[[3]][1])*x^mod_df$coefs[[3]][2],
       add = T,
       col = "red")
 
@@ -462,7 +462,8 @@ pred_df = obs_ovrsht_org %>%
 
 # add some additional uncertainty from the estimates of overshoots
 # this is the residual variance from the model
-var_org = summary(mod_log_df$lin_mod[[1]])$sigma^2
+# var_org = summary(mod_log_df$lin_mod[[1]])$sigma^2
+var_org = summary(mod_df$model[[2]])$sigma^2
 
 # this is the average variance in our estimates of overshoots that make it downstream
 # var_ovst = 0
@@ -473,21 +474,31 @@ var_ovst = dwnstrm_est %>%
   summarise(mean_var = mean(escp_var_log)) %>%
   pull(mean_var)
 
+# pred_int = predict(mod_log_df$lin_mod[[1]],
+#                    newdata = pred_df,
+#                    # interval = 'prediction',
+#                    interval = 'confidence',
+#                    level = 0.95,
+#                    se.fit = T,
+#                    scale = sqrt(var_org + var_ovst),
+#                    df = summary(mod_log_df$lin_mod[[1]])$df[2])
 
-pred_int = predict(mod_log_df$lin_mod[[1]],
+pred_int = predict(mod_df$model[[which(mod_df$type == "log_mod")]],
                    newdata = pred_df,
                    # interval = 'prediction',
                    interval = 'confidence',
                    level = 0.95,
                    se.fit = T,
                    scale = sqrt(var_org + var_ovst),
-                   df = summary(mod_log_df$lin_mod[[1]])$df[2])
+                   df = mod_df$summ[[which(mod_df$type == "log_mod")]]$df[2])
+
+
 
 all_preds = pred_df %>%
   bind_cols(pred_int$fit %>%
               as_tibble() %>%
               mutate(se_overshoot = pred_int$se.fit) %>%
-              select(fit, se_overshoot, 
+              select(fit, se_overshoot,
                      lwr, upr)) %>%
   rename(pred_overshoot = fit)
 
@@ -524,14 +535,14 @@ all_preds %>%
 
 pred_cone = tibble(tags_est = seq(1, max(obs_ovrsht_org$juv_tags)),
                    tags_est_log = log(tags_est)) %>%
-  bind_cols(predict(mod_log_df$lin_mod[[1]],
+  bind_cols(predict(mod_df$model[[which(mod_df$type == "log_mod")]],
                     newdata = .,
                     interval = 'prediction',
                     # interval = 'confidence',
                     level = 0.95,
                     se.fit = F,
                     scale = sqrt(var_org + var_ovst),
-                    df = summary(mod_log_df$lin_mod[[1]])$df[2]) %>%
+                    df = mod_df$summ[[which(mod_df$type == "log_mod")]]$df[2]) %>%
               as_tibble()) %>%
   mutate_at(vars(fit, lwr, upr),
             list(exp)) %>%
@@ -546,9 +557,9 @@ all_preds %>%
                   ymax = upr),
               color = 'lightgray',
               alpha = 0.5) +
-  geom_abline(slope = mod_log_df$slope,
-              intercept = 0,
-              color = 'blue') +
+  # geom_abline(slope = mod_df$coefs[[which(mod_df$type == "log_mod")]][2],
+  #             intercept = 0,
+  #             color = 'blue') +
   # geom_errorbar(aes(ymin = lwr95,
   #                   ymax = upr95,
   #                   color = 'POM')) +
