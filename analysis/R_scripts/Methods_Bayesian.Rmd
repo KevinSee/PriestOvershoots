@@ -36,6 +36,7 @@ library(magrittr)
 library(msm)
 library(ggrepel)
 library(ggpubr)
+library(here)
 
 library(knitr)
 library(kableExtra)
@@ -58,27 +59,27 @@ if(doc.type == 'docx') {
 
 ```{r read-data}
 # read in data
-obs_ovrsht_org = read_excel('../data/overshoot estimates.xlsx',
+obs_ovrsht_org = read_excel(here('analysis/data/raw_data/overshoot estimates.xlsx'),
                             range = 'A3:C10',
                             col_names = c('Year',
                                           'juv_tags',
                                           'pom_overshoots')) %>%
   mutate(origin = 'Wild',
          location = 'downstream_PRA') %>%
-  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+  bind_rows(read_excel(here('analysis/data/raw_data/overshoot estimates.xlsx'),
                        range = 'A19:B26',
                        col_names = c('Year',
                                      'juv_tags')) %>%
               mutate(origin = 'Wild',
                      location = 'at_PRA')) %>%
-  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+  bind_rows(read_excel(here('analysis/data/raw_data/overshoot estimates.xlsx'),
                        range = 'A31:C38',
                        col_names = c('Year',
                                      'juv_tags',
                                      'pom_overshoots')) %>%
               mutate(origin = 'Hatchery',
                      location = 'downstream_PRA')) %>%
-  bind_rows(read_excel('../data/overshoot estimates.xlsx',
+  bind_rows(read_excel(here('analysis/data/raw_data/overshoot estimates.xlsx'),
                        range = 'A47:B54',
                        col_names = c('Year',
                                      'juv_tags')) %>%
@@ -91,7 +92,7 @@ obs_ovrsht_org = read_excel('../data/overshoot estimates.xlsx',
   arrange(location, Origin, Year)
 
 # data on individual overshoots
-obs_ovrsht = read_excel("../data/known overshoot fallback locations.xlsx") %>%
+obs_ovrsht = read_excel(here("analysis/data/raw_data/known overshoot fallback locations.xlsx")) %>%
   janitor::clean_names() %>%
   rename(notes = x5,
          site = downstream_obs_site) %>%
@@ -108,7 +109,8 @@ est_ovrsht = obs_ovrsht %>%
               rlang::set_names() %>%
               map_df(.id = 'Year',
                      .f = function(x) {
-                       read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+                       read_excel(here(paste0('analysis/data/derived_data/',
+                                              'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                                   "Detection") %>%
                          janitor::clean_names()
                      }) %>%
@@ -140,7 +142,8 @@ dwnstrm_est = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(here(paste0('analysis/data/derived_data/',
+                                  'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                       1) %>%
              filter(Population == 'BelowPriest')
          }) %>%
@@ -204,7 +207,8 @@ avg_det = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(here(paste0('analysis/data/derived_data/',
+                                  'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                       "Detection") %>%
              janitor::clean_names()
          }) %>%
@@ -233,7 +237,8 @@ dwnstrm_loc_est = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(here(paste0('analysis/data/derived_data/',
+                                  'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                       2) %>%
              filter(param %in% c("BelowJD1",
                                  'past_RSH',
@@ -329,7 +334,7 @@ flbk_abund %>%
               summarise_at(vars(-Year),
                            list(mean)) %>%
               mutate(Year = "Mean")) %>%
-  write_csv('../outgoing/Table2.csv')
+  write_csv(here('analysis/outgoing/Table2.csv'))
 ```
 
 
@@ -367,9 +372,9 @@ mod_data %>%
   labs(x = 'Wild Adults Tagged as Juveniles\nthat Returned Downstream',
        y = 'Total Successful Overshoots (from POM)')
 
-ggsave('../figures/log_log_regression.pdf',
-       width = 6,
-       height = 6)
+# ggsave(here('analysis/figures/log_log_regression.pdf'),
+#        width = 6,
+#        height = 6)
 
 ```
 
@@ -384,19 +389,19 @@ Written out mathematically, the whole things looks like this:
 
 $$
 \begin{aligned}
-  \mu_i &= \sum_j^J \frac{s_{i,j}}{\hat{p_{i,j}}} \\
-  t_i &\sim N(\mu_i, \sigma^2_i) \\
-  \\
-  F_i &\sim e^{\beta_0} * t_i^{\beta_1} \\
-  \log(F_i) &= \beta_0 + \beta_1 * \log(t_i) + e_i\\
-  e_i &\sim N(0, \tau^2) \\
-  \\
-  \log(\omega_i) &= \beta_0 + \beta_1 * \log(T_i) \\
-  O_i &\sim N(\omega_i, \tau^2) \\
-  \\
-  N_i &\sim N(F_i, \gamma^2) \\
-  \\
-  \phi_i &= \frac{N_i}{O_i} \approx \left( \frac{t_i}{T_i} \right)^{\beta_1} \\
+\mu_i &= \sum_j^J \frac{s_{i,j}}{\hat{p_{i,j}}} \\
+t_i &\sim N(\mu_i, \sigma^2_i) \\
+\\
+F_i &\sim e^{\beta_0} * t_i^{\beta_1} \\
+\log(F_i) &= \beta_0 + \beta_1 * \log(t_i) + e_i\\
+e_i &\sim N(0, \tau^2) \\
+\\
+\log(\omega_i) &= \beta_0 + \beta_1 * \log(T_i) \\
+O_i &\sim N(\omega_i, \tau^2) \\
+\\
+N_i &\sim N(F_i, \gamma^2) \\
+\\
+\phi_i &= \frac{N_i}{O_i} \approx \left( \frac{t_i}{T_i} \right)^{\beta_1} \\
 \end{aligned}
 $$
 
@@ -496,13 +501,13 @@ param_summ = post_summ(post,
   mutate(cv = sd / mean)
 
 save(mod_data, jags_data, post, param_summ, post_df,
-     file = "../data/mcmc_output.rda")
+     file = here("analysis/data/derived_data/mcmc_output.rda"))
 ```
 
 # Results
 
 ```{r load-model}
-load("../data/mcmc_output.rda")
+load(here("analysis/data/derived_data/mcmc_output.rda"))
 ```
 
 ```{r comp-fig, fig.cap = "Comparison of total adusted counts at Priest and the sum of predicted overshoots and escapement to four upper Columbia steelhead populations."}
@@ -513,7 +518,7 @@ uc_pops = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                       "Population Escapement") %>%
              janitor::clean_names()
          }) %>%
@@ -531,7 +536,7 @@ pra_total = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('../data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                       "All Escapement") %>%
              janitor::clean_names()
          }) %>%
@@ -562,7 +567,7 @@ comp_df = pra_total %>%
          rel_diff = leftover / PRA,
          rel_abs_diff = abs(rel_diff)) %>%
   arrange(Origin, Year)
-  
+
 
 # comp_df %>%
 #   group_by(Origin) %>%
@@ -579,7 +584,7 @@ comp_df = pra_total %>%
 # comp_df %>%
 #   select(uc_plus_ovrst, PRA) %>%
 #   corrr::correlate()
-  
+
 
 
 comp_df %>%
@@ -604,8 +609,8 @@ comp_df %>%
 Recreate Table 3 of manuscript:
 ```{r tab3}
 tab3 = obs_ovrsht_org %>%
-                filter(location == "at_PRA") %>%
-                select(Year, Origin, ovrst_tags = juv_tags) %>%
+  filter(location == "at_PRA") %>%
+  select(Year, Origin, ovrst_tags = juv_tags) %>%
   filter(Origin == "Wild") %>%
   bind_cols(param_summ %>%
               filter(grepl("pred_ovrshts", param)) %>%
