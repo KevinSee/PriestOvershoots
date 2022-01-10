@@ -1,16 +1,19 @@
 # Author: Kevin See
 # Purpose: Logistic regression on overshoot success based on number of dams crossed
 # Created: 9/15/20
-# Last Modified: 9/16/20
-# Notes: 
+# Last Modified: 1/6/2022
+# Notes:
 
 #-----------------------------------------------------------------
 # load needed libraries
 library(tidyverse)
+library(magrittr)
+library(ggpubr)
+library(here)
 library(ResourceSelection) # for goodness of fit tests
 
 #-----------------------------------------------------------------
-# here's the data, provided by Andrew Murdoch. 
+# here's the data, provided by Andrew Murdoch.
 # All the numbers with dams > 0 are from fish tagged at PRD that return to a downstream trib
 # for dam == 0, Andrew used known Yakima fish that crossed McNary.
 # because slightly different data, we decided to only use PRD fish for the model
@@ -43,15 +46,15 @@ null_mod = glm(suc_perc ~ 1,
 
 summary(binom_mod)
 hoslem.test(binom_mod$y, fitted(binom_mod), g = 4)
-pchisq(deviance(binom_mod), binom_mod$df.null, lower = F) 
+pchisq(deviance(binom_mod), binom_mod$df.null, lower = F)
 
 # looking at goodness of fit
 anova(binom_mod,
-      null_mod, 
+      null_mod,
       test = "Chisq")
 
 lmtest::lrtest(binom_mod,
-       null_mod)
+               null_mod)
 pscl::pR2(binom_mod)
 
 exp(coef(binom_mod)[2])
@@ -72,28 +75,30 @@ tibble(dams = seq(0, 5)) %>%
                             type = "response"))
 
 # make predictions of probability of success, with confidence intervals
-pred_df = predict(binom_mod,
-                  newdata = tibble(dams = 0:5),
-                  type = "link",
-                  se = T) %>%
-  extract(1:2) %>%
-  map_df(.id = 'pred',
-         .f = identity) %>%
-  pivot_longer(cols = -pred,
-               names_to = "dams",
-               values_to = "log_odds") %>%
-  mutate(dams = as.integer(dams) - 1) %>%
-  pivot_wider(names_from = "pred",
-              values_from = "log_odds") %>%
+pred_df <- tibble(dams = seq(0, 5, by = 0.1)) %>%
+  bind_cols(predict(binom_mod,
+                    newdata = .,
+                    type = "link",
+                    se = T) %>%
+              magrittr::extract(1:2) %>%
+              map_df(.id = 'pred',
+                     .f = identity) %>%
+              pivot_longer(cols = -pred,
+                           names_to = "dams",
+                           values_to = "log_odds") %>%
+              pivot_wider(names_from = "pred",
+                          values_from = "log_odds") %>%
+              select(-dams)) %>%
   mutate(lowCI = fit + se.fit * qnorm(0.025),
          uppCI = fit + se.fit * qnorm(0.975)) %>%
   mutate_at(vars(pred_suc = fit, lowCI, uppCI),
             list(boot::inv.logit)) %>%
   select(dams,
-         pred_suc, 
+         pred_suc,
          ends_with('CI'))
 
 pred_df %>%
+  filter(dams %in% c(0:5)) %>%
   mutate_at(vars(pred_suc:uppCI),
             list(round),
             digits = 3) %>%
@@ -109,19 +114,24 @@ logis_p = dam_df %>%
                   y = pred_suc),
               color = NA,
               fill = 'gray90') +
-  geom_smooth(data = pred_df,
-              method = loess,
-              aes(y = pred_suc),
-              color = "black",
-              linetype = 2) +
+  geom_line(data = pred_df,
+            aes(y = pred_suc),
+            color = "black",
+            linetype = 2) +
+  # geom_smooth(data = pred_df,
+  #             method = loess,
+  #             aes(y = pred_suc),
+  #             color = "black",
+  #             linetype = 2) +
   geom_point(size = 4) +
-  theme_pubr(base_family = "Times New Roman",
-             base_size = 12) +
+  # geom_point(aes(size = n_tot)) +
+  theme_pubr(base_family = "serif",
+             base_size = 10) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(x = "Number of Columbia River Dams",
-       y = "Overshoot Return Rate")
+       y = "Estimated Overshoot Fallback Probability")
 
-ggsave("outgoing/Dams_Logistic.jpeg",
+ggsave(here("outgoing/Dams_Logistic.jpeg"),
        logis_p,
        width = 5,
        height = 5)
