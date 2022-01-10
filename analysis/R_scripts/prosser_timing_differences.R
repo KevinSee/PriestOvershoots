@@ -1,7 +1,7 @@
 # Author: Kevin See
 # Purpose: compare timing of overshoot tags to all tags at Prosser Dam
 # Created: 1/6/2022
-# Last Modified: 1/6/2022
+# Last Modified: 1/10/2022
 # Notes:
 
 #-----------------------------------------------------------------
@@ -37,17 +37,6 @@ pro_cnts = tibble(spawn_year = 2011:2018) %>%
   unnest(win_cnts) %>%
   mutate(month = month(Date))
 
-pro_cnts %>%
-  group_by(month) %>%
-  summarize(across(Wild_Steelhead,
-                   sum)) %>%
-  mutate(month = factor(month,
-                        levels = c(7:12, 1:6))) %>%
-  arrange(month) %>%
-  qplot(month, Wild_Steelhead,
-        data = .,
-        geom = "col")
-
 pro_julian_cnts <- pro_cnts %>%
   mutate(Date = ymd(paste(if_else(month >= 7,
                                    2019,
@@ -67,11 +56,6 @@ pro_julian_cnts <- pro_cnts %>%
   mutate(across(day,
                 as.numeric))
 
-pro_julian_cnts %>%
-  ggplot(aes(x = Date)) +
-  stat_ecdf() +
-  labs(y = "Cumulative Probability")
-
 # convert tag counts to individual rows
 ind_tags = pro_tags %>%
   select(-year) %>%
@@ -83,6 +67,7 @@ ind_tags = pro_tags %>%
                         units = "days"),
          day = as.numeric(day))
 
+# compare CDFs of arrival timing
 ind_tags %>%
   bind_rows(pro_julian_cnts) %>%
   mutate(source = fct_recode(source,
@@ -99,30 +84,19 @@ ind_tags %>%
   scale_fill_brewer(palette = "Set1",
                     name = "Data Source") +
   stat_ecdf() +
+  theme_bw() +
   theme(legend.position = "bottom") +
   scale_x_date(date_breaks = "2 months",
                date_labels =  "%b") +
   labs(y = "Cumulative Probability")
 
-ind_tags %>%
-  mutate(month = factor(month,
-                        levels = c(7:12, 1:6))) %>%
-  ggplot(aes(x = month,
-             fill = source,
-             color = source)) +
-  scale_color_brewer(palette = "Set1",
-                     name = "Tag Source") +
-  scale_fill_brewer(palette = "Set1",
-                    name = "Tag Source") +
-  geom_histogram(position = "dodge",
-                 stat = "count")
-
+# density plot
 ind_tags %>%
   bind_rows(pro_julian_cnts) %>%
   mutate(source = fct_recode(source,
                              "Yakima Tags" = "Yakima",
                              "Priest Tags" = "Priest")) %>%
-  filter(source != "Priest Tags") %>%
+  # filter(source != "Priest Tags") %>%
   mutate(across(Date,
                 as.Date)) %>%
   mutate(across(Date,
@@ -136,7 +110,8 @@ ind_tags %>%
                     name = "Data Source") +
   geom_density(alpha = 0.2) +
   scale_x_date(date_breaks = "2 months",
-               date_labels =  "%b")
+               date_labels =  "%b") +
+  theme_bw()
 
 # pull out vectors of days by source
 yak_tags <- ind_tags %>%
@@ -145,19 +120,20 @@ prd_tags <- ind_tags %>%
   filter(source == "Priest")
 
 # Kolmogorov-Smirnov test
+# using day
 ks.test(yak_tags$day,
         prd_tags$day)
-
+# using month
 ks.test(yak_tags$month,
         prd_tags$month)
 
-
+# looking at dam counts and tags
 ks.test(pro_julian_cnts$day,
         prd_tags$day)
 
+# some subsets, trying to find a combination that looks the same
 ks.test(pro_julian_cnts$day[pro_julian_cnts$Date <= ymd("20200430")],
         yak_tags$day[yak_tags$Date <= ymd("20200430")])
-
 
 ks.test(pro_julian_cnts$day[pro_julian_cnts$Date >= ymd("20191101") &
                               pro_julian_cnts$Date <= ymd("20200430")],
@@ -169,96 +145,7 @@ ks.test(pro_julian_cnts$month[pro_julian_cnts$month >= 10 |
         yak_tags$month[yak_tags$month >= 10 |
                          yak_tags$month <= 4])
 
-hist(pro_julian_cnts$day)
-hist(yak_tags$day)
-
-hist(pro_julian_cnts$day[pro_julian_cnts$Date >= ymd("20191101") &
-                           pro_julian_cnts$Date <= ymd("20200430")],
-     breaks = 25,
-     xlab = "Season Day",
-     main = "Prosser Dam Counts")
-hist(yak_tags$day[yak_tags$Date >= ymd("20191101") &
-                    yak_tags$Date <= ymd("20200430")],
-     breaks = 25,
-     xlab = "Season Day",
-     main = "Yakima Tags Arriving at Prosser")
-
 #-----------------------------------------------------------------
-
-# are time series correlated?
-cor(pro_tags$Yakima,
-    pro_tags$Priest)
-cor.test(pro_tags$Yakima,
-         pro_tags$Priest)
-
-
-pro_tags %>%
-  pivot_longer(cols = c(Yakima, Priest),
-               names_to = "source",
-               values_to = "n_tags") %>%
-  ggplot(aes(x = n_tags,
-             color = source)) +
-  stat_ecdf()
-
-# cumulative tags at Prosser (equivalent to CDF?)
-cum_pro_tags <- pro_tags %>%
-  mutate(across(c(Yakima,
-                  Priest),
-                cumsum)) %>%
-  pivot_longer(cols = c(Yakima, Priest),
-               names_to = "source",
-               values_to = "cum_tags") %>%
-  group_by(source) %>%
-  mutate(cum_dens = cum_tags / max(cum_tags)) %>%
-  ungroup() %>%
-  mutate(day = difftime(Date, min(Date), units = "days"),
-         day = as.numeric(day)) %>%
-  mutate(across(day,
-                ~ . / max(.)))
-
-cum_pro_tags %>%
-  ggplot(aes(x = day,
-             y = cum_dens,
-             color = source)) +
-  scale_color_brewer(palette = "Set1",
-                     name = "Tag Source") +
-  geom_line() +
-  labs(x = "Arrival Season",
-       y = "Cummulative Probability",
-       title = "Arrival to Prosser")
-
-
-tmp <- cum_pro_tags %>%
-  select(Date, source, cum_dens) %>%
-  pivot_wider(names_from = source,
-              values_from = cum_dens)
-
-# KS test statistic
-ks_test_stat = tmp %>%
-  mutate(D = abs(Priest - Yakima)) %>%
-  summarise(across(D,
-                   max)) %>%
-  pull(D)
-# value to compare to, see if D is greater than:
-n <- nrow(tmp)
-ks_test_stat > 1.358 * sqrt(2*n / n^2)
-
-
-ks.test(tmp$Yakima,
-        tmp$Priest)
-
-
-pro_tags %>%
-  pivot_longer(cols = c(Yakima, Priest),
-               names_to = "source",
-               values_to = "n_tags") %>%
-  ggplot(aes(x = Date,
-             y = n_tags,
-             color = source)) +
-  scale_color_brewer(palette = "Set1",
-                     name = "Tag Source") +
-  geom_line()
-
 #-----------------------------------------------------------------
 # recreate figure 3
 # get temperature data
@@ -316,9 +203,13 @@ fig_3 <- pro_tags %>%
                           values_from = temp),
             by = c("month")) %>%
   mutate(Date = ymd(paste(year, month, "01"))) %>%
+  mutate(source = as_factor(source),
+         source = fct_relevel(source,
+                              "Priest",
+                              after = 0)) %>%
   ggplot(aes(x = Date,
              y = tag_prop,
-             fill = fct_rev(source))) +
+             fill = source)) +
   scale_fill_grey(name = "Tag\nSource") +
   geom_col(position = "dodge",
            color = "black") +
@@ -333,23 +224,29 @@ fig_3 <- pro_tags %>%
   scale_y_continuous(name = "Mean proportion at Prosser Dam",
                      # limits = c(0,0.45),
                      sec.axis = sec_axis(name = "Water Temperature (C)",
-                                         trans = ~ . * coeff)) +
+                                         trans = ~ . * coeff,
+                                         breaks = seq(0, 25, length.out = 6))) +
   theme_pubr(base_family = "serif",
              base_size = 10) +
   theme(axis.text.x = element_text(angle = 45,
                                    hjust = 1),
-        axis.title.x = element_blank()) +
-  guides(fill = guide_legend(nrow = 2),
-               linetype = guide_legend(nrow = 2)) +
+        axis.title.x = element_blank(),
+        legend.position = "bottom") +
+  guides(fill = guide_legend(nrow = 2,
+                             title.position = "left"),
+         linetype = guide_legend(nrow = 2,
+                                 title.position = "left")) +
+  theme(legend.position = c(0.75, 0.8)) +
+  # theme(legend.background = element_rect(fill = "white", color = "black")) +
   labs(linetype = "Temperature\nSource")
 
 
 fig_3
+
 ggsave(here("outgoing/Prosser_Timing.jpeg"),
        fig_3,
        width = 5,
        height = 5)
-
 
 
 # what proportion of each group of tags arrived by Jan 1?
