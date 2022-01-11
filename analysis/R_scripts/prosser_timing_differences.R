@@ -243,7 +243,7 @@ fig_3 <- pro_tags %>%
 
 fig_3
 
-ggsave(here("outgoing/Prosser_Timing.jpeg"),
+ggsave(here("analysis/figures/Prosser_Timing.jpeg"),
        fig_3,
        width = 5,
        height = 5)

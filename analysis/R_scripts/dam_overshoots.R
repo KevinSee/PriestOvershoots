@@ -131,7 +131,7 @@ logis_p = dam_df %>%
   labs(x = "Number of Columbia River Dams",
        y = "Estimated Overshoot Fallback Probability")
 
-ggsave(here("outgoing/Dams_Logistic.jpeg"),
+ggsave(here("analysis/figures/Dams_Logistic.jpeg"),
        logis_p,
        width = 5,
        height = 5)
