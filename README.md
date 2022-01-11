@@ -1,30 +1,32 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-**This is a test of where this note gets pushed too**
-
 # PriestOvershoots
 
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/KevinSee/PriestOvershoots/master?urlpath=rstudio)
 
 This repository contains the data and code for our paper:
 
-> Authors, (YYYY). *Title of your paper goes here*. Name of journal/book
+> Murdoch, A.R., K.E. See and B.J. Truscott, (2022). *Abundance and
+> Migration Success of Overshoot Steelhead in the Upper Columbia River*.
+> North American Journal of Fisheries Management
 > <https://doi.org/xxx/xxx>
 
 Our pre-print is online here:
 
-> Authors, (YYYY). *Title of your paper goes here*. Name of
-> journal/book, Accessed 11 Jan 2022. Online at
-> <https://doi.org/xxx/xxx>
+> Murdoch, A.R., K.E. See and B.J. Truscott, (2022). *Abundance and
+> Migration Success of Overshoot Steelhead in the Upper Columbia River*.
+> North American Journal of Fisheries Management, Accessed 11 Jan 2022.
+> Online at <https://doi.org/xxx/xxx>
 
 ### How to cite
 
 Please cite this compendium as:
 
-> Authors, (2022). *Compendium of R code and data for Title of your
-> paper goes here*. Accessed 11 Jan 2022. Online at
-> <https://doi.org/xxx/xxx>
+> Murdoch, A.R., K.E. See and B.J. Truscott, (2022). *Compendium of R
+> code and data for Abundance and Migration Success of Overshoot
+> Steelhead in the Upper Columbia River*. Accessed 11 Jan 2022. Online
+> at <https://doi.org/xxx/xxx>
 
 ## Contents
 
