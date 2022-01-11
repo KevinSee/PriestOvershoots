@@ -4,6 +4,8 @@ output: github_document
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
+**This is a test of where this note gets pushed too**
+
 ```{r, echo = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
