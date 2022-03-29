@@ -3,6 +3,8 @@
 
 # PriestOvershoots
 
+Can you see this line?
+
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/KevinSee/PriestOvershoots/master?urlpath=rstudio)
 
 This repository contains the data and code for our paper:
@@ -16,7 +18,7 @@ Our pre-print is online here:
 
 > Murdoch, A.R., K.E. See and B.J. Truscott, (2022). *Abundance and
 > Migration Success of Overshoot Steelhead in the Upper Columbia River*.
-> North American Journal of Fisheries Management, Accessed 11 Jan 2022.
+> North American Journal of Fisheries Management, Accessed 25 Jan 2022.
 > Online at <https://doi.org/xxx/xxx>
 
 ### How to cite
@@ -25,7 +27,7 @@ Please cite this compendium as:
 
 > Murdoch, A.R., K.E. See and B.J. Truscott, (2022). *Compendium of R
 > code and data for Abundance and Migration Success of Overshoot
-> Steelhead in the Upper Columbia River*. Accessed 11 Jan 2022. Online
+> Steelhead in the Upper Columbia River*. Accessed 25 Jan 2022. Online
 > at <https://doi.org/xxx/xxx>
 
 ## Contents
