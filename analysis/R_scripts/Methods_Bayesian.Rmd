@@ -57,6 +57,150 @@ if(doc.type == 'docx') {
 
 ```
 
+```{r tot-adj-prd-cnts, eval = F}
+library(STADEM)
+
+prd_adj_cnts <- tibble(year = 2011:2018) %>%
+  mutate(prd_adj = map(year,
+                       .f = function(yr) {
+                         
+                         
+                         # load compressed detections and biological data
+                         load(paste0("C:/Users/seek1477/OneDrive - Washington State Executive Branch Agencies/Documents/Git/MyProjects/DabomPriestRapidsSthd/analysis/data/derived_data/PITcleanr/UC_Steelhead_", yr, '.rda'))
+                         
+                         org_df <- bio_df %>%
+                           mutate(origin = recode(origin,
+                                                  "H" = "Hatchery",
+                                                  "W" = "Wild")) %>%
+                           group_by(origin) %>%
+                           summarise(n_tags = n_distinct(tag_code)) %>%
+                           mutate(prop = n_tags / sum(n_tags),
+                                  prop_se = sqrt((prop * (1 - prop)) / sum(n_tags)))
+                         
+                         # load JAGS MCMC results
+                         # load(paste0("C:/Users/seek1477/OneDrive - Washington State Executive Branch Agencies/Documents/Git/MyProjects/DabomPriestRapidsSthd/analysis/data/derived_data/model_fits/PRA_DABOM_Steelhead_", yr,'.rda'))
+                         # 
+                         # load("C:/Users/seek1477/OneDrive - Washington State Executive Branch Agencies/Documents/Git/MyProjects/DabomPriestRapidsSthd/analysis/data/derived_data/site_config.rda")
+                         # # compile all movement probabilities, and multiply them appropriately
+                         # trans_df = compileTransProbs_PRA(dabom_mod,
+                         #                                  parent_child) %>%
+                         #   mutate(origin = recode(origin,
+                         #                          "2" = "Hatchery",
+                         #                          "1" = "Wild"))
+                         # 
+                         # trans_df %>%
+                         #   filter(param %in% c('ICH', 'JD1', 'JDA', 'PRH', 'PRO', 'PRV', 'RSH', 'TMF')) %>%
+                         #   group_by(chain, iter, origin) %>%
+                         #   summarize(across(value,
+                         #                    sum),
+                         #             .groups = "drop") %>%
+                         #   group_by(origin) %>%
+                         #   summarize(across(value,
+                         #                    list(mean = mean,
+                         #                         median = median,
+                         #                         sd = sd)))
+
+                         # org_df <- enframe(jags_data$fish_type,
+                         #                   name = "fish_num",
+                         #                   value = "origin") %>%
+                         #   mutate(origin = recode(origin,
+                         #                          "1" = "Wild",
+                         #                          "2" = "Hatchery")) %>%
+                         #   group_by(origin) %>%
+                         #   summarise(n_tags = n_distinct(fish_num)) %>%
+                         #   mutate(prop = n_tags / sum(n_tags),
+                         #          prop_se = sqrt((prop * (1 - prop)) / sum(n_tags)))
+                         
+                         
+                         start_date = paste0(yr-1, '0601')
+                         end_date = paste0(yr, '0531')
+                         
+                         
+                         # start with PIT-tag based reascension data
+                         org_escape = queryPITtagData(damPIT = 'PRA',
+                                                      spp = "Steelhead",
+                                                      start_date = start_date,
+                                                      end_date = end_date) %>%
+                           filter(!str_detect(TagId, "000.0")) %>%
+                           mutate(SpawnYear = yr) %>%
+                           mutate(across(TagIdAscentCount,
+                                         tidyr::replace_na,
+                                         0)) %>%
+                           mutate(ReAscent = ifelse(TagIdAscentCount > 1, T, F)) %>%
+                           group_by(Species, SpawnYear, Date) %>%
+                           summarise(tot_tags = n_distinct(TagId),
+                                     reascent_tags = n_distinct(TagId[ReAscent]),
+                                     .groups = "drop") %>%
+                           group_by(Species, SpawnYear) %>%
+                           summarise(across(matches('tags'),
+                                            sum,
+                                            na.rm = T),
+                                     .groups = "drop") %>%
+                           mutate(reasc_rate = reascent_tags / tot_tags,
+                                  reasc_rate_se = sqrt(reasc_rate * (1 - reasc_rate) / tot_tags)) %>%
+                           # add window counts
+                           bind_cols(getWindowCounts(dam = 'PRD',
+                                                     spp = "Steelhead",
+                                                     start_date = start_date,
+                                                     end_date = end_date) %>%
+                                       summarise_at(vars(win_cnt),
+                                                    list(sum),
+                                                    na.rm = T) %>%
+                                       select(tot_win_cnt = win_cnt)) %>%
+                           mutate(adj_win_cnt = tot_win_cnt * (1 - reasc_rate),
+                                  adj_win_cnt_se = tot_win_cnt * reasc_rate_se) %>%
+                           bind_cols(org_df) %>%
+                           rowwise() %>%
+                           mutate(tot_escp = adj_win_cnt * prop,
+                                  tot_escp_se = msm::deltamethod(~ x1 * x2,
+                                                                 mean = c(adj_win_cnt, prop),
+                                                                 cov = diag(c(adj_win_cnt_se, prop_se)^2))) %>%
+                           select(Species, SpawnYear, origin, 
+                                  matches("cnt"),
+                                  matches("reasc_rate"), 
+                                  matches('escp'))
+                         
+                         return(org_escape)
+                       })) %>%
+  unnest(prd_adj) %>%
+  select(-Species,
+         -SpawnYear)
+
+prd_adj_cnts %>% 
+  select(year, origin, tot_escp) %>% 
+  pivot_wider(names_from = origin, 
+              values_from = tot_escp) %>% 
+  select(year, Wild, Hatchery)
+
+# tibble(year = 2011:2018) %>%
+#   mutate(escp = map(year,
+#                     function(yr) {
+#                       # read_excel(here(paste0('analysis/data/derived_data/',
+#                       #                        'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+#                       read_excel(here(paste0('analysis/data/derived_data/',
+#                                              'DABOM_results/UC_Steelhead_', yr, '_20211122.xlsx')),
+#                                  1) %>%
+#                         rename(location = group) %>%
+#                         mutate(origin = recode(origin,
+#                                                "W" = "Wild",
+#                                                "H" = "Hatchery")) %>%
+#                         bind_rows(read_excel(here(paste0('analysis/data/derived_data/',
+#                                                          'DABOM_results/UC_Steelhead_', yr, '_20211122.xlsx')),
+#                                              2) %>%
+#                                     filter(location %in% c("PRA_bb",
+#                                                            "RIA_bb",
+#                                                            "RRF_bb")) %>%
+#                                     mutate(origin = recode(origin,
+#                                                            "1" = "Wild",
+#                                                            "2" = "Hatchery"))) %>%
+#                         # group_by(origin) %>%
+#                         summarize(across(estimate,
+#                                          sum))
+#                     }))
+
+```
+
+
 ```{r read-data}
 # read in data
 obs_ovrsht_org = read_excel(here('analysis/data/raw_data/overshoot estimates.xlsx'),
@@ -109,8 +253,10 @@ est_ovrsht = obs_ovrsht %>%
               rlang::set_names() %>%
               map_df(.id = 'Year',
                      .f = function(x) {
+                       # read_excel(here(paste0('analysis/data/derived_data/',
+                       #                        'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
                        read_excel(here(paste0('analysis/data/derived_data/',
-                                              'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+                                              'DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
                                   "Detection") %>%
                          janitor::clean_names()
                      }) %>%
@@ -142,15 +288,26 @@ dwnstrm_est = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
+           # read_excel(here(paste0('analysis/data/derived_data/',
+           #                        'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+           #            1) %>%
+           #   filter(Population == 'BelowPriest')
+           
            read_excel(here(paste0('analysis/data/derived_data/',
-                                  'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+                                  'DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
                       1) %>%
-             filter(Population == 'BelowPriest')
+             filter(group == 'BelowPriest') %>%
+             rename(Population = group,
+                    Origin = origin,
+                    Estimate = estimate,
+                    SE = se)
+           
          }) %>%
   mutate_at(vars(Year),
             list(as.numeric)) %>%
   mutate(Origin = recode(Origin,
-                         'Natural' = 'Wild'))
+                         'W' = 'Wild',
+                         "H" = "Hatchery"))
 
 # join escapement estimates and estimated overshoot tags, using all branches and all overshoot tags
 # Andrew's preferred method
@@ -182,6 +339,8 @@ jags_data = mod_data %>%
   select(-escp_est,
          -escp_prec,
          -Year) %>%
+  select(-species,
+         -spawn_year) %>%
   as.list()
 
 # add data for predictions
@@ -207,8 +366,10 @@ avg_det = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
+           # read_excel(here(paste0('analysis/data/derived_data/',
+           #                        'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
            read_excel(here(paste0('analysis/data/derived_data/',
-                                  'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+                                              'DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
                       "Detection") %>%
              janitor::clean_names()
          }) %>%
@@ -233,32 +394,61 @@ avg_det = as.list(2011:2018) %>%
 
 ```{r dwnstrm_abund}
 # get branch specific estimates of downstream escapement
+# dwnstrm_loc_est = as.list(2011:2018) %>%
+#   rlang::set_names() %>%
+#   map_df(.id = 'Year',
+#          .f = function(x) {
+#            read_excel(here(paste0('analysis/data/derived_data/',
+#                                   'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+#              filter(param %in% c("BelowJD1",
+#                                  'past_RSH',
+#                                  'past_PRH',
+#                                  'past_JD1',
+#                                  'past_TMF',
+#                                  'past_ICH',
+#                                  'past_PRO',
+#                                  'past_PRV')) %>%
+#              rename(site = param) %>%
+#              mutate(site = str_remove(site, "^past_"))
+#          }) %>%
+#   mutate_at(vars(Year),
+#             list(as.numeric)) %>%
+#   mutate(Origin = recode(Origin,
+#                          'Natural' = 'Wild')) %>%
+#   rename(pom_est = Estimate,
+#          pom_se = SE,
+#          pom_ci_low = lowerCI,
+#          pom_ci_high = upperCI)
+
 dwnstrm_loc_est = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
            read_excel(here(paste0('analysis/data/derived_data/',
-                                  'DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+                                  'DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
                       2) %>%
-             filter(param %in% c("BelowJD1",
-                                 'past_RSH',
-                                 'past_PRH',
-                                 'past_JD1',
-                                 'past_TMF',
-                                 'past_ICH',
-                                 'past_PRO',
-                                 'past_PRV')) %>%
-             rename(site = param) %>%
-             mutate(site = str_remove(site, "^past_"))
+             filter(location %in% c("JDA",
+                                    'RSH',
+                                    'PRH',
+                                    'JD1',
+                                    'TMF',
+                                    'ICH',
+                                    'PRO',
+                                    'PRV')) %>%
+             rename(site = location)
          }) %>%
   mutate_at(vars(Year),
             list(as.numeric)) %>%
+  rename(Origin = origin) %>%
   mutate(Origin = recode(Origin,
-                         'Natural' = 'Wild')) %>%
-  rename(pom_est = Estimate,
-         pom_se = SE,
+                         '1' = 'Wild',
+                         '2' = 'Hatchery')) %>%
+  rename(pom_est = estimate,
+         pom_se = se,
          pom_ci_low = lowerCI,
          pom_ci_high = upperCI)
+
+           
 
 # re-shape data
 flbk_abund = dwnstrm_loc_est %>%
@@ -310,6 +500,7 @@ avg_det %>%
   kable_styling()
 ```
 
+Re-create Table 2
 ```{r flbk-est}
 flbk_abund %>%
   mutate_at(vars(Year),
@@ -381,7 +572,7 @@ mod_data %>%
 We then use that relationship, ($\hat{\beta}$), and the total number of known overshoot tags observed at Priest, $T_i$, to predict the total overshoot abundance at Priest, $O_i$. The overshoot return survival, $\phi_i$, is the calculated from that and the estimate of total downstream abundance.
 
 $$
-\phi_i = \frac{N_i}{O_i}
+\phi_i = \frac{R_i}{O_i}
 $$
 
 Written out mathematically, the whole things looks like this:
@@ -396,12 +587,11 @@ F_i &\sim e^{\beta_0} * t_i^{\beta_1} \\
 \log(F_i) &= \beta_0 + \beta_1 * \log(t_i) + e_i\\
 e_i &\sim N(0, \tau^2) \\
 \\
-\log(\omega_i) &= \beta_0 + \beta_1 * \log(T_i) \\
-O_i &\sim N(\omega_i, \tau^2) \\
+\log(O_i) &\sim N(\hat{\beta_0} + \hat{\beta_1} * \log(T_i), \hat{\tau^2}) \\
 \\
-N_i &\sim N(F_i, \gamma^2) \\
+R_i &\sim N(F_i, \gamma^2) \\
 \\
-\phi_i &= \frac{N_i}{O_i} \approx \left( \frac{t_i}{T_i} \right)^{\beta_1} \\
+\phi_i &= \frac{R_i}{O_i} \approx \left( \frac{t_i}{T_i} \right)^{\beta_1} \\
 \end{aligned}
 $$
 
@@ -452,7 +642,8 @@ library(postpack)
 library(rjags)
 
 # write model to a text file
-jags_file = "model.txt"
+jags_file = here("analysis/R_scripts",
+                 "model.txt")
 write_model(jags_model, jags_file)
 
 # which paramters to track?
@@ -495,7 +686,7 @@ post_df = as.matrix(post,
 param_summ = post_summ(post,
                        jags_params,
                        Rhat = T,
-                       ess = T) %>%
+                       neff = T) %>%
   t() %>%
   as_tibble(rownames = "param") %>%
   mutate(cv = sd / mean)
@@ -507,59 +698,142 @@ save(mod_data, jags_data, post, param_summ, post_df,
 # Results
 
 ```{r load-model}
+library(postpack)
+library(rjags)
+
 load(here("analysis/data/derived_data/mcmc_output.rda"))
 ```
+
+```{r model-diagnostics, eval=F}
+diag_plots(post, "sigma")
+
+# test for normality of residuals
+resid_df <- post_df %>% 
+  filter(str_detect(param, "mu")) %>% 
+  mutate(obs = rep(jags_data$escp_est_log, 4000)) %>% 
+  mutate(resid = obs - value)
+
+ggqqplot(resid_df$resid)
+ggdensity(resid_df$resid,
+          fill = "lightgrey")
+
+ggplot(resid_df,
+       aes(x = resid)) +
+  geom_histogram(aes(fill = param),
+                 binwidth = 0.05)
+
+ggplot(resid_df) +
+  geom_density(aes(x = resid),
+               fill = "lightgray") +
+  geom_function(fun = dnorm,
+                args = list(mean = 0, 
+                            sd = 0.568),
+                color = "red")
+
+mean_resid_df <- resid_df %>%
+  group_by(param) %>%
+  summarize(across(c(value, obs, resid),
+                   mean),
+            .groups = "drop")
+
+ggqqplot(mean_resid_df$resid)
+ggdensity(mean_resid_df$resid,
+          fill = "lightgrey")
+shapiro.test(mean_resid_df$resid)
+```
+
 
 ```{r comp-fig, fig.cap = "Comparison of total adusted counts at Priest and the sum of predicted overshoots and escapement to four upper Columbia steelhead populations."}
 #--------------------------------------------------
 # compare counts at Priest and estimates across UC pops
 #--------------------------------------------------
+# uc_pops = as.list(2011:2018) %>%
+#   rlang::set_names() %>%
+#   map_df(.id = 'Year',
+#          .f = function(x) {
+#            read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+#                       "Population Escapement") %>%
+#              janitor::clean_names()
+#          }) %>%
+#   filter(population %in% c("Wenatchee",
+#                            "Entiat",
+#                            "Methow",
+#                            "Okanogan")) %>%
+#   group_by(Year, Origin = origin) %>%
+#   summarise_at(vars(uc_pops = estimate),
+#                list(sum)) %>%
+#   ungroup()
+
+# pra_total = as.list(2011:2018) %>%
+#   rlang::set_names() %>%
+#   map_df(.id = 'Year',
+#          .f = function(x) {
+#            read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+#                       "All Escapement") %>%
+#              janitor::clean_names()
+#          }) %>%
+#   filter(param %in% c("past_RIA",
+#                       'dwnStrm',
+#                       "PRA_bb")) %>%
+#   group_by(Year, Origin = origin) %>%
+#   summarise_at(vars(PRA = estimate),
+#                list(sum)) %>%
+#   ungroup()
+
 uc_pops = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
                       "Population Escapement") %>%
              janitor::clean_names()
          }) %>%
-  filter(population %in% c("Wenatchee",
-                           "Entiat",
-                           "Methow",
-                           "Okanogan")) %>%
+  filter(group %in% c("Wenatchee",
+                      "Entiat",
+                      "Methow",
+                      "Okanogan")) %>%
   group_by(Year, Origin = origin) %>%
   summarise_at(vars(uc_pops = estimate),
                list(sum)) %>%
   ungroup()
 
-
 pra_total = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
+           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
                       "All Escapement") %>%
              janitor::clean_names()
          }) %>%
-  filter(param %in% c("past_RIA",
-                      'dwnStrm',
-                      "PRA_bb")) %>%
+  filter(location %in% c("RIA",
+                         'ICH', 'JD1', 'JDA', 'PRH', 'PRO', 'PRV', 'RSH', 'TMF',
+                         "PRA_bb")) %>%
   group_by(Year, Origin = origin) %>%
-  summarise_at(vars(PRA = estimate),
-               list(sum)) %>%
-  ungroup()
+  summarise(across(estimate,
+                   sum),
+            .groups = "drop") %>%
+  ungroup() %>%
+  rename(PRA = estimate) %>%
+  mutate(Origin = recode(Origin,
+                         "1" = "W",
+                         "2" = "H"))
+
 
 comp_df = pra_total %>%
   full_join(uc_pops) %>%
   mutate_at(vars(Year),
             list(as.numeric)) %>%
   mutate(Origin = recode(Origin,
-                         "Natural" = "Wild")) %>%
+                         "W" = "Wild",
+                         "H" = "Hatchery")) %>%
   full_join(param_summ %>%
               filter(grepl('pred_ovrshts', param)) %>%
               bind_cols(obs_ovrsht_org %>%
                           filter(location == "at_PRA") %>%
-                          select(Year, Origin)) %>%
+                          select(Year, Origin,
+                                 juv_tags)) %>%
               select(Year, Origin,
+                     juv_tags,
                      pred_ovrst = mean)) %>%
   mutate(uc_plus_ovrst = uc_pops + pred_ovrst,
          leftover = PRA - uc_plus_ovrst,
@@ -571,7 +845,11 @@ comp_df = pra_total %>%
 
 # comp_df %>%
 #   group_by(Origin) %>%
-#   summarise_at(vars(PRA, leftover, abs_diff, rel_diff, rel_abs_diff),
+#   summarise_at(vars(PRA, uc_pops,
+#                     pred_ovrst,
+#                     uc_plus_ovrst, 
+#                     leftover, abs_diff, 
+#                     rel_diff, rel_abs_diff),
 #                list(mean)) %>%
 #   mutate(abs_rel_diff = abs_diff / PRA)
 # 
@@ -593,11 +871,13 @@ comp_df %>%
   geom_line(aes(y = PRA,
                 color = "At Priest")) +
   geom_point(aes(y = PRA,
-                 color = "At Priest")) +
+                 color = "At Priest"),
+             size = 3) +
   geom_line(aes(y = uc_plus_ovrst,
                 color = "UC Pops plus Est. Overshoots")) +
   geom_point(aes(y = uc_plus_ovrst,
-                 color = "UC Pops plus Est. Overshoots")) +
+                 color = "UC Pops plus Est. Overshoots"),
+             size = 3) +
   scale_color_brewer(palette = "Set1",
                      name = "Source") +
   theme(legend.position = "bottom") +
@@ -605,6 +885,165 @@ comp_df %>%
              scales = 'fixed') +
   labs(y = "Total Steelhead")
 ```
+
+# Tables
+
+Recreate Table 1 of manuscript:
+```{r tab1}
+tab1 <- dwnstrm_est %>%
+  pivot_wider(names_from = Origin,
+              values_from = Estimate:upperCI) %>%
+  select(Year,
+         ends_with("Wild"),
+         ends_with("Hatchery")) %>%
+  mutate(across(Year,
+                as.character)) %>%
+  left_join(pra_total %>%
+              pivot_wider(names_from = Origin,
+                          values_from = PRA) %>%
+              rename(adj_tot_Wild = W,
+                     adj_tot_Hatchery = H)) %>%
+  mutate(perc_Wild = Estimate_Wild / adj_tot_Wild,
+         perc_Hatchery = Estimate_Hatchery / adj_tot_Hatchery) %>%
+  relocate(perc_Wild,
+           .before = Estimate_Wild) %>%
+  relocate(perc_Hatchery,
+           .before = Estimate_Hatchery) %>%
+  select(Year,
+         starts_with("adj_tot"),
+         ends_with("Wild"),
+         ends_with("Hatchery")) %>%
+  mutate(Year = as.character(as.numeric(Year) - 1))
+
+tab1_summ <- tab1 %>%
+  select(ends_with("Wild"),
+         ends_with("Hatchery")) %>%
+  summarize(across(everything(),
+                   mean)) %>%
+  add_column(Year = "Mean",
+             .before = 0) %>%
+  bind_rows(tab1 %>%
+              select(ends_with("Wild"),
+                     ends_with("Hatchery")) %>%
+              summarize(across(everything(),
+                               sd)) %>%
+              add_column(Year = "SD",
+                         .before = 0))
+
+tab1 %>%
+  bind_rows(tab1_summ) %>%
+  select(-starts_with("SE")) %>%
+  mutate(across(starts_with("perc"),
+                ~ paste(round(., 3) * 100, "%"))) %>%
+  add_column(space = " ",
+             .before = 'perc_Wild') %>%
+  kable(booktabs = T,
+        digits = 0,
+        format.args = list(big.mark = ','),
+        linesep = "",
+        align = "c",
+        col.names = c(rep(" ", 6),
+                      "Lower",
+                      "Upper",
+                      rep(" ", 2),
+                      "Lower",
+                      "Upper"),
+        caption = "Steelhead abundance (adjusted for ladder re-ascension) at Priest Rapids Dam and the estimated number of overshoot fallback steelhead using the patch occupancy model, 2010-2017.") %>%
+  kable_styling(latex_options = c("scale_down")) %>%
+  add_header_above(c("Run Year" = 1,
+                     "Wild" = 1, 
+                     "Hatchery" = 1,
+                     " " = 1,
+                     "%" = 1, 
+                     "Estimate" = 1,
+                     "95% CI" = 2,
+                     "%" = 1, 
+                     "Estimate" = 1,
+                     "95% CI" = 2)) %>%
+  add_header_above(c(" " = 1,
+                     "Adjusted Priest Rapids Dam Count" = 2,
+                     " " = 1,
+                     "Wild" = 4,
+                     "Hatchery" = 4)) %>%
+  add_header_above(c(" " = 4,
+                     "Estimated Overshoot Fallback Abundance" = 8)) %>%
+  row_spec(row = 8,
+           hline_after = T)
+```
+
+Recreate Table 2 of manuscript:
+```{r tab2}
+top_nms <- avg_det %>%
+  select(node,
+         mean,
+         mean_se) %>%
+  mutate(river = recode(node,
+                        "ICH" = "Snake",
+                        "JD1" = "John Day",
+                        "PRO" = "Yakima",
+                        "PRV" = "Walla Walla",
+                        "TMF" = "Umatilla")) %>%
+  mutate(prnt_val = paste0(river, "\n",
+                           node, "\n",
+                           "(",
+                           round(mean, 2), 
+                           ", ",
+                           round(mean_se, 2),
+                           ")")) %>%
+  select(node, prnt_val) %>%
+  mutate(across(node,
+                factor,
+                levels = c("PRO", 
+                           "ICH", 
+                           "PRV",
+                           "TMF",
+                           "JD1"))) %>%
+  arrange(node) %>%
+  mutate(rep = 2) %>%
+  select(-node) %>%
+  add_row(prnt_val = " ",
+          rep = 1,
+          .before = 0)
+
+flbk_abund %>%
+  mutate(across(Year,
+                ~ . - 1)) %>%
+  mutate(across(Year,
+                as.character)) %>%
+  mutate(across(-Year,
+                janitor::round_half_up)) %>%
+  mutate(across(-Year,
+                ~ as.character(prettyNum(., big.mark = ",")))) %>%
+  bind_rows(flbk_abund %>%
+              summarise(across(-Year,
+                               mean)) %>%
+              mutate(across(everything(),
+                janitor::round_half_up)) %>%
+              mutate(across(everything(),
+                            ~ as.character(prettyNum(., big.mark = ",")))) %>%
+              mutate(Year = "Mean") %>%
+              bind_rows(flbk_abund %>%
+                          summarise_at(vars(-Year),
+                                       list(mean)) %>%
+                          mutate(avg_tot = rowSums(.)) %>%
+                          mutate(across(-avg_tot,
+                                        ~ round(. / avg_tot, 3) * 100)) %>%
+                          select(-avg_tot) %>%
+                          mutate(across(everything(),
+                                        as.character)) %>%
+                          mutate(Year = "%"))) %>%
+  kable(booktabs = T,
+        align = "c",
+        linesep = "",
+        col.names = c("Run Year",
+                      rep(c("W", "H"),
+                          5)),
+        caption = "Estimates of overshoot fallback steelhead downstream of Priest Rapids Dam, by sub-basin and PTAGIS location code. (PRO = Prosser Dam; ICH = Ice Harbor Dam; PRV = Pierce RV Park instream array; TMF = Three Mile Falls Dam; JD1 = Lower John Day instream array at McDonald Ferry). Parentheses indicate PIT tag detection probability (mean, mean of SE). W = wild and H = hatchery.") %>%
+  kable_styling(latex_options = c("scale_down")) %>%
+  add_header_above(top_nms)
+  
+```
+
 
 Recreate Table 3 of manuscript:
 ```{r tab3}
@@ -623,18 +1062,44 @@ tab3 = obs_ovrsht_org %>%
               slice(9:16) %>%
               select(phi = mean,
                      phi_ci_low = `2.5%`,
-                     phi_ci_upp = `97.5%`))
+                     phi_ci_upp = `97.5%`)) %>%
+  select(-Origin)
 
 tab3 %>%
-  select(-Origin) %>%
   mutate(Year = Year - 1) %>%
   mutate_at(vars(Year),
             list(as.character)) %>%
+  bind_rows(tab3 %>%
+              summarize(across(-Year,
+                               mean)) %>%
+                add_column(Year = "Mean",
+                           .before = 0) %>%
+                bind_rows(tab3 %>% 
+                            summarize(across(-Year,
+                                             sd)) %>%
+                            add_column(Year = "SD",
+                                       .before = 0))) %>%
   kable(booktabs = T,
         digits = c(rep(0, 5), rep(3, 3)),
         format.args = list(big.mark = ','),
         linesep = "",
-        caption = "Estimated abundance of overshoot steelhead at Priest Rapids Dam and the overshoot return rate or proportion of fish observed downstream of Priest Rapids Dam prior to spawning.") %>%
-  kable_styling(latex_options = c("scale_down"))
+        col.names = c("Run Year",
+                      "Known Overshoot Fish",
+                      "Estimate",
+                      "Lower",
+                      "Upper",
+                      "Estimate",
+                      "Lower",
+                      "Upper"),
+        caption = "Estimated abundance of overshoot steelhead at Priest Rapids Dam and the percentage of overshoot fallback or percentage of fish observed downstream of Priest Rapids Dam prior to spawning.") %>%
+  kable_styling(latex_options = c("scale_down")) %>%
+  add_header_above(c(" " = 3,
+                     "95% CI" = 2,
+                     " " = 1,
+                     "95% CI" = 2)) %>%
+  add_header_above(c(" " = 2,
+                     "Estimated Wild Steelhead Overshoot Abundance" = 3,
+                     "Overshoot Fallback Percentage\n(# fallbacks / # overshoots)" = 3))
+  
 ```
 

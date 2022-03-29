@@ -10,10 +10,12 @@ model {
     for(i in 1:length(tags_est)) {
     n_tags_org[i] ~ dnorm(tags_est[i], tags_prec[i])
     n_tags[i] <- round(n_tags_org[i])
+    
+    # couldn't figure out how to incorporate this uncertainty, 
+    # because n_escp_log would end up on the left side twice
     # n_escp_log[i] ~ dlnorm(escp_est[i], escp_prec[i])
     
     mu[i] <- beta[1] + beta[2] * log(n_tags[i])
-    # mu[i] <- beta[1] + beta[2] * n_tags[i]
     
     # assuming downstream escapement estimates are known
     escp_est_log[i] ~ dnorm(mu[i], tau)
@@ -26,7 +28,6 @@ model {
     
     # predict the number of overshoot fish at Priest
     pred_mu_log[i] <- beta[1] + beta[2] * log(ovrst_tags[i])
-    # pred_mu_log[i] <- beta[1] + beta[2] * ovrst_tags[i]
     pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(est_dwnstrm[i]),log(1e4))
     pred_ovrshts[i] <- round(exp(pred_ovrshts_log[i]))
   

@@ -2,7 +2,7 @@
 # Purpose: Calculate adult overshoots at Priest Rapids dam
 # Created: 9/19/19
 # Last Modified: 10/4/19
-# Notes: 
+# Notes:
 
 #-----------------------------------------------------------------
 # load needed libraries
@@ -16,27 +16,27 @@ theme_set(theme_bw())
 
 #-----------------------------------------------------------------
 # read in data
-data = read_excel('data/overshoot estimates.xlsx',
+data = read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                   range = 'A3:C10',
                   col_names = c('Year',
                                 'juv_tags',
                                 'pom_overshoots')) %>%
   mutate(origin = 'Wild',
          location = 'downstream_PRA') %>%
-  bind_rows(read_excel('data/overshoot estimates.xlsx',
+  bind_rows(read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A19:B26',
                        col_names = c('Year',
                                      'juv_tags')) %>%
               mutate(origin = 'Wild',
                      location = 'at_PRA')) %>%
-  bind_rows(read_excel('data/overshoot estimates.xlsx',
+  bind_rows(read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A31:C38',
                        col_names = c('Year',
                                      'juv_tags',
                                      'pom_overshoots')) %>%
               mutate(origin = 'Hatchery',
                      location = 'downstream_PRA')) %>%
-  bind_rows(read_excel('data/overshoot estimates.xlsx',
+  bind_rows(read_excel('analysis/data/raw_data/overshoot estimates.xlsx',
                        range = 'A47:B54',
                        col_names = c('Year',
                                      'juv_tags')) %>%
@@ -50,7 +50,7 @@ dwnstrm_est = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
          .f = function(x) {
-           read_excel(paste0('data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
+           read_excel(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx'),
                       1) %>%
              filter(Population == 'BelowPriest')
          }) %>%
@@ -86,12 +86,23 @@ p = data %>%
   geom_smooth(method = lm,
               formula = y ~ x - 1,
               se = F,
-              fullrange = T) +
+              fullrange = T,
+              aes(color = "Linear - 0 Int.")) +
   geom_smooth(method = lm,
               formula = y ~ x,
-              color = 'red',
+              aes(color = "Linear"),
               se = F,
               fullrange = T) +
+  geom_smooth(method = glm,
+              formula = y ~ log(x),
+              method.args = list(family = gaussian(link = "log")),
+              aes(color = "Log-log"),
+              se = F,
+              fullrange = T) +
+  scale_color_viridis_d(name = "Model Fit",
+                        end = 0.9) +
+  # scale_color_brewer(palette = "Set1",
+  #                    name = "Model Fit") +
   facet_wrap(~ origin,
              scales = 'free') +
   labs(x = 'Adults Tagged as Juveniles',
@@ -107,7 +118,7 @@ ggsave('figures/Regressions.pdf',
 
 # get estimates of downstream escapement to specific arrays
 site_df = PITcleanr::writePRDNodeNetwork()
-site_df %>% 
+site_df %>%
   filter(Step2 == 'BelowPriest') %>%
   filter(Step4 == '')
 
@@ -179,7 +190,7 @@ wild_p = mod_df %>%
   geom_text_repel(aes(label = Year)) +
   geom_text(x = 5,
             y = 1700,
-            vjust = 0, 
+            vjust = 0,
             hjust = 0,
             parse = T,
             label = paste("r^2 ==", round(mod_df$R2, 3))) +
@@ -492,14 +503,14 @@ joint_det %>%
   summarise_at(vars(n_tags, starts_with("joint")),
                list(mean))
 
-dwn_det %>%  
+dwn_det %>%
   filter(Site == 'PRV') %>%
   filter(n_tags > 0) %>%
   group_by(Site) %>%
   summarise_at(vars(n_tags, Estimate, SE),
                list(mean))
 
-dwn_det %>%  
+dwn_det %>%
   filter(Site == 'TMF') %>%
   filter(n_tags > 0) %>%
   group_by(Site) %>%
