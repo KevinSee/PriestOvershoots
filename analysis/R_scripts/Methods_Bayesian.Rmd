@@ -28,7 +28,6 @@ knitr::opts_chunk$set(
 ```
 
 ```{r load-packages}
-# setwd('analysis')
 # load needed libraries
 library(tidyverse)
 library(readxl)
@@ -36,7 +35,9 @@ library(magrittr)
 library(msm)
 library(ggrepel)
 library(ggpubr)
+library(scales)
 library(here)
+library(STADEM)
 
 library(knitr)
 library(kableExtra)
@@ -747,39 +748,6 @@ shapiro.test(mean_resid_df$resid)
 #--------------------------------------------------
 # compare counts at Priest and estimates across UC pops
 #--------------------------------------------------
-# uc_pops = as.list(2011:2018) %>%
-#   rlang::set_names() %>%
-#   map_df(.id = 'Year',
-#          .f = function(x) {
-#            read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
-#                       "Population Escapement") %>%
-#              janitor::clean_names()
-#          }) %>%
-#   filter(population %in% c("Wenatchee",
-#                            "Entiat",
-#                            "Methow",
-#                            "Okanogan")) %>%
-#   group_by(Year, Origin = origin) %>%
-#   summarise_at(vars(uc_pops = estimate),
-#                list(sum)) %>%
-#   ungroup()
-
-# pra_total = as.list(2011:2018) %>%
-#   rlang::set_names() %>%
-#   map_df(.id = 'Year',
-#          .f = function(x) {
-#            read_excel(here(paste0('analysis/data/derived_data/DABOM_results/PRA_Steelhead_', x[1], '_20190610.xlsx')),
-#                       "All Escapement") %>%
-#              janitor::clean_names()
-#          }) %>%
-#   filter(param %in% c("past_RIA",
-#                       'dwnStrm',
-#                       "PRA_bb")) %>%
-#   group_by(Year, Origin = origin) %>%
-#   summarise_at(vars(PRA = estimate),
-#                list(sum)) %>%
-#   ungroup()
-
 uc_pops = as.list(2011:2018) %>%
   rlang::set_names() %>%
   map_df(.id = 'Year',
@@ -792,81 +760,173 @@ uc_pops = as.list(2011:2018) %>%
                       "Entiat",
                       "Methow",
                       "Okanogan")) %>%
-  group_by(Year, Origin = origin) %>%
-  summarise_at(vars(uc_pops = estimate),
-               list(sum)) %>%
-  ungroup()
+  select(Year, Group = group,
+         origin, estimate, se) %>%
+  mutate(across(Year,
+                as.integer))
 
-pra_total = as.list(2011:2018) %>%
-  rlang::set_names() %>%
-  map_df(.id = 'Year',
-         .f = function(x) {
-           read_excel(here(paste0('analysis/data/derived_data/DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
-                      "All Escapement") %>%
-             janitor::clean_names()
-         }) %>%
-  filter(location %in% c("RIA",
-                         'ICH', 'JD1', 'JDA', 'PRH', 'PRO', 'PRV', 'RSH', 'TMF',
-                         "PRA_bb")) %>%
-  group_by(Year, Origin = origin) %>%
-  summarise(across(estimate,
-                   sum),
-            .groups = "drop") %>%
-  ungroup() %>%
-  rename(PRA = estimate) %>%
-  mutate(Origin = recode(Origin,
-                         "1" = "W",
-                         "2" = "H"))
+# pra_total = as.list(2011:2018) %>%
+#   rlang::set_names() %>%
+#   map_df(.id = 'Year',
+#          .f = function(x) {
+#            read_excel(here(paste0('analysis/data/derived_data/DABOM_results/UC_Steelhead_', x[1], '_20211122.xlsx')),
+#                       "All Escapement") %>%
+#              janitor::clean_names()
+#          }) %>%
+#   filter(location %in% c("RIA",
+#                          'ICH', 'JD1', 'JDA', 'PRH', 'PRO', 'PRV', 'RSH', 'TMF',
+#                          "PRA_bb")) %>%
+#   group_by(Year, origin) %>%
+#   summarize(estimate = sum(estimate),
+#             se = sqrt(sum(se^2)),
+#             .groups = "drop") %>%
+#   mutate(origin = recode(origin,
+#                          "1" = "W",
+#                          "2" = "H")) %>%
+#   add_column(Group = "PRD Adj. Counts",
+#              .after = "Year")
 
+pra_total <- tibble(Year = 2011:2018) %>%
+  mutate(pra_cnts = map(Year,
+                        .f = function(yr) {
+                          start_date = paste0(yr-1, '0601')
+                          end_date = paste0(yr, '0531')
+                          
+                          load(here("analysis/data/derived_data/DABOMready",
+                                    paste0("UC_Steelhead_", yr, ".rda")))
+                          
+                          org_escape = queryPITtagData(damPIT = 'PRA',
+                                                       spp = "Steelhead",
+                                                       start_date = start_date,
+                                                       end_date = end_date) %>%
+                            filter(!str_detect(TagId, "000.0")) %>%
+                            mutate(SpawnYear = yr) %>%
+                            mutate(across(TagIdAscentCount,
+                                          tidyr::replace_na,
+                                          0)) %>%
+                            mutate(ReAscent = ifelse(TagIdAscentCount > 1, T, F)) %>%
+                            group_by(Species, SpawnYear, Date) %>%
+                            summarise(tot_tags = n_distinct(TagId),
+                                      reascent_tags = n_distinct(TagId[ReAscent]),
+                                      .groups = "drop") %>%
+                            group_by(Species, SpawnYear) %>%
+                            summarise(across(matches('tags'),
+                                             sum,
+                                             na.rm = T),
+                                      .groups = "drop") %>%
+                            mutate(reasc_rate = reascent_tags / tot_tags,
+                                   reasc_rate_se = sqrt(reasc_rate * (1 - reasc_rate) / tot_tags)) %>%
+                            # add window counts
+                            bind_cols(getWindowCounts(dam = 'PRD',
+                                                      spp = "Steelhead",
+                                                      start_date = start_date,
+                                                      end_date = end_date) %>%
+                                        summarise_at(vars(win_cnt),
+                                                     list(sum),
+                                                     na.rm = T) %>%
+                                        select(tot_win_cnt = win_cnt)) %>%
+                            mutate(adj_win_cnt = tot_win_cnt * (1 - reasc_rate),
+                                   adj_win_cnt_se = tot_win_cnt * reasc_rate_se) %>%
+                            bind_cols(bio_df %>%
+                                        group_by(origin) %>%
+                                        summarise(n_tags = n_distinct(tag_code)) %>%
+                                        mutate(prop = n_tags / sum(n_tags),
+                                               prop_se = sqrt((prop * (1 - prop)) / sum(n_tags)))) %>%
+                            rowwise() %>%
+                            mutate(tot_escp = adj_win_cnt * prop,
+                                   tot_escp_se = msm::deltamethod(~ x1 * x2,
+                                                                  mean = c(adj_win_cnt, prop),
+                                                                  cov = diag(c(adj_win_cnt_se, prop_se)^2))) %>%
+                            select(Species, SpawnYear, origin, reasc_rate, matches('escp'))
+                          
+                          return(org_escape)
 
-comp_df = pra_total %>%
-  full_join(uc_pops) %>%
-  mutate_at(vars(Year),
-            list(as.numeric)) %>%
-  mutate(Origin = recode(Origin,
-                         "W" = "Wild",
-                         "H" = "Hatchery")) %>%
-  full_join(param_summ %>%
+                        })) %>%
+  unnest(pra_cnts) %>%
+  mutate(Group = "PRD Adj. Counts") %>%
+  select(Year, Group,
+         origin,
+         estimate = tot_escp,
+         se = tot_escp_se)
+
+comp_df <- pra_total %>%
+  bind_rows(uc_pops) %>%
+  bind_rows(param_summ %>%
               filter(grepl('pred_ovrshts', param)) %>%
               bind_cols(obs_ovrsht_org %>%
                           filter(location == "at_PRA") %>%
                           select(Year, Origin,
                                  juv_tags)) %>%
-              select(Year, Origin,
-                     juv_tags,
-                     pred_ovrst = mean)) %>%
-  mutate(uc_plus_ovrst = uc_pops + pred_ovrst,
+              select(Year, origin = Origin,
+                     estimate = mean,
+                     se = sd) %>%
+              mutate(origin = recode(origin,
+                                     "Hatchery" = "H",
+                                     "Wild" = "W")) %>%
+              add_column(Group = "Overshoots",
+                         .after = "Year")) %>%
+  mutate(across(Group,
+                factor,
+                levels = c("PRD Adj. Counts",
+                           "Overshoots",
+                           "Wenatchee",
+                           "Entiat",
+                           "Methow",
+                           "Okanogan"))) %>%
+  arrange(origin, Year, Group)
+
+comp_summ = comp_df %>%
+  filter(Group %in% c("Wenatchee",
+                      "Entiat",
+                      "Methow",
+                      "Okanogan")) %>%
+  group_by(Year, origin) %>%
+  summarize(estimate = sum(estimate),
+            se = sqrt(sum(se^2)),
+            .groups = "drop") %>%
+  add_column(Group = "uc_pops",
+             .after = "Year") %>%
+  bind_rows(comp_df %>%
+              filter(Group %in% c("PRD Adj. Counts",
+                                  "Overshoots"))) %>%
+  mutate(across(Group,
+                recode,
+                'PRD Adj. Counts' = 'PRA')) %>%
+  select(-se) %>%
+  pivot_wider(names_from = Group,
+              values_from = estimate) %>%
+  mutate(uc_plus_ovrst = uc_pops + Overshoots,
          leftover = PRA - uc_plus_ovrst,
          abs_diff = abs(leftover),
          rel_diff = leftover / PRA,
          rel_abs_diff = abs(rel_diff)) %>%
-  arrange(Origin, Year)
-
-
-# comp_df %>%
-#   group_by(Origin) %>%
+  arrange(origin, Year)
+  
+# 
+# comp_summ %>%
+#   group_by(origin) %>%
 #   summarise_at(vars(PRA, uc_pops,
-#                     pred_ovrst,
-#                     uc_plus_ovrst, 
-#                     leftover, abs_diff, 
+#                     Overshoots,
+#                     uc_plus_ovrst,
+#                     leftover, abs_diff,
 #                     rel_diff, rel_abs_diff),
 #                list(mean)) %>%
 #   mutate(abs_rel_diff = abs_diff / PRA)
 # 
-# comp_df %>%
-#   group_by(Origin) %>%
+# comp_summ %>%
+#   group_by(origin) %>%
 #   summarise(PRA_mean = mean(PRA),
 #             RMSE = sqrt(mean(leftover^2)),
 #             rel_RMSE = RMSE / PRA_mean)
 # 
-# comp_df %>%
+# comp_summ %>%
 #   select(uc_plus_ovrst, PRA) %>%
 #   corrr::correlate()
 
 
 
-comp_df %>%
-  filter(Origin == "Wild") %>%
+comp_summ %>%
+  filter(origin == "W") %>%
   ggplot(aes(x = Year)) +
   geom_line(aes(y = PRA,
                 color = "At Priest")) +
@@ -881,10 +941,72 @@ comp_df %>%
   scale_color_brewer(palette = "Set1",
                      name = "Source") +
   theme(legend.position = "bottom") +
-  facet_wrap(~ Origin,
+  facet_wrap(~ origin,
              scales = 'fixed') +
   labs(y = "Total Steelhead")
 ```
+
+Figure 5
+
+```{r fig-prd-cnts, fig.cap = "Comparison between adjusted dam counts at PRD (circles) and summed estimates of the four Upper Columbia steelhead populations plus estimates of steelhead overshoots at PRD. Whiskers represent 95% confidence intervals of those sums, most of which is due to uncertainty of overshoot estimates."}
+tot_summ <- comp_df %>%
+  filter(origin == "W",
+         Group != "PRD Adj. Counts") %>%
+  group_by(Year) %>%
+  summarize(estimate = sum(estimate),
+            se = sqrt(sum(se^2)))
+
+comp_df %>%
+  filter(origin == "W",
+         Group != "PRD Adj. Counts") %>%
+  mutate(across(Group,
+                fct_drop)) %>%
+  ggplot(aes(x = Year,
+             y = estimate)) +
+  geom_col(aes(fill = Group),
+           color = "black") +
+  # geom_col_pattern(aes(pattern = Group,
+  #                      fill = Group),
+  #                  pattern_fill = "gray80",
+  #                  pattern_color = "black") +
+  scale_fill_grey(start = 0.9,
+                  end = 0.1,
+                  name = "Population") +
+  geom_errorbar(data = tot_summ,
+                aes(ymin = qnorm(0.025, estimate, se),
+                    ymax = qnorm(0.975, estimate, se)),
+                width = 0.1) +
+  geom_point(data = comp_df %>%
+               filter(origin == "W",
+                      Group == "PRD Adj. Counts"),
+             aes(size = Group,
+                 shape = Group)) +
+  geom_line(data = comp_df %>%
+               filter(origin == "W",
+                      Group == "PRD Adj. Counts"),
+            aes(linetype = Group)) +
+  scale_shape_manual(values = c("PRD Adj. Counts" = 1),
+                     name = NULL) +
+  scale_size_manual(values = c("PRD Adj. Counts" = 4),
+                     name = NULL) +
+  scale_linetype_manual(values = c("PRD Adj. Counts" = 2),
+                     name = NULL) +
+  scale_x_continuous(n.breaks = 8) +
+  scale_y_continuous(labels = comma) +
+  guides(fill = guide_legend(nrow = 5,
+                             title.position = "top")) +
+  theme_pubr(base_family = "serif",
+             base_size = 10) +
+  theme(legend.position = c(0.9, 0.8)) +
+  labs(y = "Number of Wild Steelhead")
+
+# ggsave(here("analysis/figures",
+#             "prd_counts.png"),
+#        width = 5,
+#        height = 5)
+
+```
+
 
 # Tables
 
@@ -896,11 +1018,10 @@ tab1 <- dwnstrm_est %>%
   select(Year,
          ends_with("Wild"),
          ends_with("Hatchery")) %>%
-  mutate(across(Year,
-                as.character)) %>%
   left_join(pra_total %>%
-              pivot_wider(names_from = Origin,
-                          values_from = PRA) %>%
+              select(-Group, -se) %>%
+              pivot_wider(names_from = origin,
+                          values_from = estimate) %>%
               rename(adj_tot_Wild = W,
                      adj_tot_Hatchery = H)) %>%
   mutate(perc_Wild = Estimate_Wild / adj_tot_Wild,
