@@ -1,0 +1,37 @@
+model {
+    # PRIORS
+    for(i in 1:2) {
+    beta[i] ~ dt(0, 0.01, 1)
+    }
+    sigma ~ dt(0, 0.01, 1)T(0,)
+    tau <- pow(sigma, -2)
+    
+    # MODEL
+    for(i in 1:length(tags_est)) {
+    n_tags_org[i] ~ dnorm(tags_est[i], tags_prec[i])
+    n_tags[i] <- round(n_tags_org[i])
+    
+    # couldn't figure out how to incorporate this uncertainty, 
+    # because n_escp_log would end up on the left side twice
+    # n_escp_log[i] ~ dlnorm(escp_est[i], escp_prec[i])
+    
+    mu[i] <- beta[1] + beta[2] * n_tags[i]
+    
+    # assuming downstream escapement estimates are known
+    escp_est[i] ~ dnorm(mu[i], tau)
+    }
+    
+    for(i in 1:length(ovrst_tags)) {
+    # deal with uncertainty in downstream escapement estimates
+    est_dwnstrm_org[i] ~ dnorm(dwnstrm_escp[i], 1 / (dwnstrm_se[i]^2))
+    est_dwnstrm[i] <- round(est_dwnstrm_org[i])
+    
+    # predict the number of overshoot fish at Priest
+    pred_mu[i] <- beta[1] + beta[2] * ovrst_tags[i]
+    pred_ovrshts_raw[i] ~ dnorm(pred_mu[i], tau)T(est_dwnstrm[i],1e4)
+    pred_ovrshts[i] <- round(pred_ovrshts_raw[i])
+  
+    # estimate survival of overshoots
+    phi[i] <- est_dwnstrm[i] / pred_ovrshts[i]
+    }
+}

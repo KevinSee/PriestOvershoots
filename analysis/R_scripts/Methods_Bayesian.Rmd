@@ -2,17 +2,17 @@
 title: "Overshoot Bayesian Methods"
 author: "Kevin See"
 output:
-  bookdown::html_document2:
-    fig_height: 6
-    fig_width: 6
-  bookdown::pdf_document2:
-    fig_caption: yes
-    fig_height: 6
-    fig_width: 6
   bookdown::word_document2:
     fig_height: 6
     fig_width: 6
     always_allow_html: true
+  bookdown::pdf_document2:
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 6
+  bookdown::html_document2:
+    fig_height: 6
+    fig_width: 6
 fontsize: 12pt
 mainfont: Times New Roman
 ---
@@ -560,7 +560,16 @@ mod_data %>%
               formula = y ~ log(x),
               method.args = list(family = gaussian(link = 'log')),
               se = F,
-              fullrange = T) +
+              fullrange = T,
+              aes(color = "Log-log")) +
+  geom_smooth(method = glm,
+              formula = y ~ x,
+              method.args = list(family = gaussian(link = 'identity')),
+              se = F,
+              fullrange = T,
+              aes(color = "Linear")) +
+  scale_color_brewer(palette = "Set1",
+                     name = "Model") +
   labs(x = 'Wild Adults Tagged as Juveniles\nthat Returned Downstream',
        y = 'Total Successful Overshoots (from POM)')
 
@@ -629,7 +638,7 @@ jags_model = function() {
     
     # predict the number of overshoot fish at Priest
     pred_mu_log[i] <- beta[1] + beta[2] * log(ovrst_tags[i])
-    pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(est_dwnstrm[i]),log(1e4))
+    pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(est_dwnstrm[i]), log(1e4))
     pred_ovrshts[i] <- round(exp(pred_ovrshts_log[i]))
 
     # estimate survival of overshoots
@@ -662,7 +671,7 @@ jags = jags.model(jags_file,
                   data = jags_data,
                   inits = list(pred_ovrshts_log = log(jags_data$dwnstrm_escp + 10)),
                   n.chains = 4,
-                  n.adapt = 1000)
+                  n.adapt = 2000)
 
 # burnin
 update(jags, n.iter = 50000)
@@ -670,7 +679,7 @@ update(jags, n.iter = 50000)
 post = coda.samples(jags,
                     jags_params,
                     n.iter = 50000,
-                    thin = 50)
+                    thin = 25)
 
 # convert posteriors into long tibble
 post_df = as.matrix(post,
@@ -741,6 +750,9 @@ ggqqplot(mean_resid_df$resid)
 ggdensity(mean_resid_df$resid,
           fill = "lightgrey")
 shapiro.test(mean_resid_df$resid)
+
+diag_plots(post, "phi")
+
 ```
 
 
@@ -1175,13 +1187,15 @@ tab3 = obs_ovrsht_org %>%
   bind_cols(param_summ %>%
               filter(grepl("pred_ovrshts", param)) %>%
               slice(9:16) %>%
-              select(ovrst_PRD = mean,
+              # select(ovrst_PRD = mean,
+              select(ovrst_PRD = `50%`,
                      prd_ci_low = `2.5%`,
                      prd_ci_upp = `97.5%`)) %>%
   bind_cols(param_summ %>%
               filter(grepl("phi", param)) %>%
               slice(9:16) %>%
-              select(phi = mean,
+              # select(phi = mean,
+              select(phi = `50%`,
                      phi_ci_low = `2.5%`,
                      phi_ci_upp = `97.5%`)) %>%
   select(-Origin)
@@ -1222,5 +1236,45 @@ tab3 %>%
                      "Estimated Wild Steelhead Overshoot Abundance" = 3,
                      "Overshoot Fallback Percentage\n(# fallbacks / # overshoots)" = 3))
   
+```
+
+Comparing another way to calculate $\phi$: fallback estimates from \@ref(tab:tab1) divided by total overshoots at Priest estimates from \@ref(tab:tab3):
+
+```{r}
+param_summ |>
+  filter(str_detect(param,
+                    "est_dwnstrm") |
+           str_detect(param,
+                      "pred_ovrshts") |
+           str_detect(param,
+                      "phi")) |>
+  mutate(param_fam = str_split(param, "\\[", simplify = T)[,1],
+         param_num = str_extract(param, "[:digit:]+"),
+         param_num = as.numeric(param_num)) |>
+  filter(param_num %in% c(9:16)) |>
+  select(param_fam, param_num, 
+         # est = mean) %>%
+         est = `50%`) %>%
+  pivot_wider(names_from = param_fam,
+              values_from = est) %>%
+  mutate(phi_v2 = est_dwnstrm / pred_ovrshts) |>
+  mutate(Year = 2010:2017) |>
+  select(Year,
+         est_dwnstrm,
+         pred_ovrshts,
+         phi, phi_v2) %>%
+  kable(booktabs = T,
+        digits = c(rep(0, 3), rep(3, 2)),
+        format.args = list(big.mark = ','),
+        linesep = "",
+        col.names = c("Run Year",
+                      "Estimated Fallbacks",
+                      "Estimated Overshoots",
+                      "Estimated Phi",
+                      "Version 2 Phi"),
+        caption = "Estimated abundance of fallback steelhead downstream of Priest Rapids Dam, overshoot steelhead at Priest Rapids Dam and two ways of calculating probability of fallback success.") %>%
+  kable_styling()
+
+
 ```
 

@@ -28,7 +28,7 @@ model {
     
     # predict the number of overshoot fish at Priest
     pred_mu_log[i] <- beta[1] + beta[2] * log(ovrst_tags[i])
-    pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(est_dwnstrm[i]),log(1e4))
+    pred_ovrshts_log[i] ~ dnorm(pred_mu_log[i], tau)T(log(est_dwnstrm[i]), log(1e4))
     pred_ovrshts[i] <- round(exp(pred_ovrshts_log[i]))
   
     # estimate survival of overshoots
