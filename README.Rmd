@@ -16,7 +16,7 @@ Title <- "Abundance and Migration Success of Overshoot Steelhead in the Upper Co
 authors <- "Murdoch, A.R., K.E. See and B.J. Truscott"
 yr <- 2022
 journal <- "North American Journal of Fisheries Management"
-doi <- 'doi.org/xxx/xxx'
+doi <- 'doi.org/10.1002/nafm.10800'
 ```
 
 # PriestOvershoots
@@ -29,10 +29,6 @@ Can you see this line?
 This repository contains the data and code for our paper:
 
 > `r authors`, (`r yr`). _`r Title`_. `r journal` <https://`r doi`>
-
-Our pre-print is online here:
-
-> `r authors`, (`r yr`). _`r Title`_. `r journal`, Accessed `r format(Sys.Date(), "%d %b %Y")`. Online at <https://`r doi`>
 
 
 ### How to cite
